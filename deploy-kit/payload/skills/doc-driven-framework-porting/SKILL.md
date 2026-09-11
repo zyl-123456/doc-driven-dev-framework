@@ -27,17 +27,29 @@ agent_created: true
 
 1. 在目标工程目录建 `开发驱动文档/`，复制 `templates/` 下六份 md → `开发驱动文档/00~04` + 根目录 `START_HERE.md`，`verify.py` → 根目录。
 2. 全局替换占位符：`{{PROJECT}}` → 项目名；`{{DATE}}` → 当天日期（YYYY-MM-DD）。
-3. 按项目实际填写：00 文档第十一节领域扩展（领域一句话、11.6 交付流程——非安卓项目可改写或删除）、01 文档（项目目标、C-001 平台约束、Q-001/002 初始问题、协作授权日期）、02 文档（技术理解、Q/ASM 初值）、START_HERE（第二层全貌、第一层交付铁律）。
+3. 按项目实际填写：00 文档**第十二节领域扩展**（v3 编号：按 12.1–12.5 逐项过，12.5 领域红线必填，其余可留空；另 11.2 交付纪律按项目类型改写或标注"不适用"——**注意 v2 的"第十一节领域扩展 / 11.6 交付流程"编号在 v3 已作废**）、01 文档（项目目标、C-001 平台约束、Q-001/002 初始问题、协作授权日期）、02 文档（技术理解、Q/ASM 初值）、START_HERE（第二层全貌、第一层交付铁律）。
 4. 04 文档 M-000 与坑位速查表首行按需保留或清空示例行。
 
 ### 第 3 步：git 证据链闭环（结论绑定输入版本）
 
-```
-git init -b main → add -A → 首提交（框架文件，含 .gitignore）
-→ 把首提交短哈希回填 04 文档 M-000 关键证据行
-→ verify.py（此时"git 工作区干净"项 FAIL —— 机制自证，属预期）
-→ 二次提交（哈希回填）→ verify.py 全绿 = 移植完成
-```
+**建库前先体检**（错误一旦进了历史很难清）：① 现有文件换行符是否全 LF；② 敏感词扫描（token / api_key / password / Bearer）；③ 有无 `.bak` / `__pycache__` / 临时目录残留。
+
+**建库配置（别省，否则以后整文件 diff、中文名乱码）**：
+
+    git init -b main
+    git config core.autocrlf false     # 关掉换行符自动转换：工作区是 LF 就必须关
+    git config core.quotepath false    # 中文文件名正常显示，不转八进制
+
+同时落盘两个文件——`.gitignore`（排除构建产物 / 缓存 / 备份 / 编辑器目录）与 `.gitattributes`（`* text=auto eol=lf` + 二进制扩展名显式 `binary`）。
+
+**流程**：
+
+    add -A → 首提交（框架文件 + .gitignore + .gitattributes）
+    → 把首提交短哈希回填 04 文档 M-000 关键证据行
+    → verify.py（此时"git 工作区干净"项 FAIL —— 机制自证，属预期）
+    → 二次提交（哈希回填）→ verify.py 全绿 = 移植完成
+
+**项数会变，别被吓到**：非 git 环境 verify.py 走 INFO 跳过分支（少一项）；建库后激活"git 工作区干净"检查，项数 +1（实测母版：建库前 28 项 → 建库后 29 项）。提交完成即全绿。
 
 ### 第 4 步：收尾四件套（同一轮完成）
 
@@ -50,9 +62,9 @@ git init -b main → add -A → 首提交（框架文件，含 .gitignore）
 
 - **占位符残留**：占位符分两类——`{{PROJECT}}`/`{{DATE}}` 全局机换，替换后 grep 确认清零；**描述性占位**（`{{一句话}}`/`{{假设}}`/`{{状态}}` 等）须按项目实际逐处填写或删除，**特别注意成对一致性**：02 的 ASM 行与 04 登记簿的 ASM 行必须同删同留（verify 的跨文档一致性检查会抓悬空引用，实测命中）。
 - **资料库检索关键词**（仅校准源路径）：只命中"文档驱动"，其他表述零命中。
-- **中文路径 git 输出**：`git status --porcelain` 文件名转八进制转义，按行数判定不按内容解析。
+- **中文路径 git 输出**：默认 `core.quotepath=true` 会把中文名转成八进制转义（`\346\226\207...`），既难读也难解析——**建库时就设 `core.quotepath false` 根治**；若脚本要解析输出，仍建议按行数判定而非内容匹配。
 - **MSYS bash python**：沙箱内 `python verify.py` 可用；Windows 用户侧建议 `E:\anaconda\python.exe verify.py` 双口径提示。
-- **CRLF 警告无害**：Windows 下 git 首次提交的 LF→CRLF 警告可忽略。
+- **换行符要治本，不能只忽略警告**（本条替换旧版"CRLF 警告无害可忽略"）：Windows 下 `core.autocrlf` 默认为 true，会把工作区文件转成 CRLF → 整文件 diff，并直接破坏"工作区干净"判定。**建库时必做**：`git config core.autocrlf false` + 落盘 `.gitattributes`（`* text=auto eol=lf`，二进制扩展名显式 `binary`）；提交前先体检现有文件是否全 LF（实测 top_design 母版 41/41 全 LF，配完零转换，`git status` 始终干净）。
 - **非 git 环境降级**：verify.py 对非 git 仓库自动 INFO 跳过（不 FAIL），用户后补 git 时无需改脚本。
 
 ## 全新设备部署（整套能力迁移）
