@@ -30,9 +30,10 @@
 |---|---|---|
 | **本母版** | `D:\000-me-work\top_design` | **唯一权威源**，改规则只改这里 |
 | 技能副本 | `~/.workbuddy/skills/doc-driven-framework-porting/templates/` | 冷启动 copy 源（发布副本）。**已同步为 v4**（2026-09-12）；旧版备份在 `~/.workbuddy/skills-backup/`（`...-v2-20260912/`、`...-templates-v3-20260912/`） |
-| 副本同步工具 | `deploy-kit/sync-master.py` | 一条命令同步三条链路（母版→payload/master、本机技能→payload/skills、母版↔技能templates 一致性告警）。**母版改完必须跑** |
+| 副本同步工具 | `deploy-kit/sync-master.py` | 一条命令同步**四条链路**（母版→payload/master、本机技能→payload/skills、**母版 hooks/→payload/hooks**、模板↔母版与实装钩子↔母版 两条一致性告警）。**母版改完必须跑** |
+| 打包工具 | `deploy-kit/package.py` | 重打 `dist/` 的分发 zip（防手工打包漏文件），**sync 之后跑** |
 | 行为层技能 | `~/.workbuddy/skills/doc-driven-dev/` | 运行态纪律，跨项目共用 |
-| 触发层钩子 | `~/.workbuddy/hooks/doc-driven-guard.py` + `settings.json` 的 `hooks` | 平台强制注入纪律（2026-09-12 挂载） |
+| 触发层钩子 | 权威源 `hooks/doc-driven-guard.py`；实装 `~/.workbuddy/hooks/doc-driven-guard.py` + `settings.json` 的 `hooks` | 平台强制注入纪律。**v2（2026-09-12）改为实时读项目 `00` 文档 + 注入动态快照，不再内嵌纪律副本** |
 | 迁移包 | `deploy-kit/`（本目录内） | 新设备一键部署（技能+钩子+配置+记忆+母版） |
 
 - **规矩**：母版改动 → 老大验收确认 → 再同步技能副本。**不许两边各改各的**。
@@ -44,6 +45,8 @@
 - **占位符成对一致性**：`02` 的 ASM 行与 `04` 假设登记簿的 ASM 行必须同增同删，否则 `verify.py` 的跨文档一致性检查会 FAIL。
 - **验证要跑两种布局 + 两种模式**：母版目录（文档在根、`MODE="template"`）与真实项目布局（文档在 `开发驱动文档/`、`MODE="project"`）都必须通过。实测：模板态 **35** 项、项目态 **37** 项。
 - **母版工作区已建 git 库**（2026-09-12）：`main` 分支，`.gitattributes` 强制全库 LF、`core.autocrlf false`、`core.quotepath false`；`/dist/` 打包产物不入库（用 deploy-kit 重新生成）。收尾四步的"提交干净"在本工作区**可执行**。
+- **钩子提取正文要认两种列表**（钩子 v2 首测命中）：`00` 里「落档纪律」用**有序列表** `1. 2.`、其他节多用无序 `- `；只认一种会静默漏提取。写法：`re.match(r"^(?:[-*]|\d+[.)])\s+(.*)$", s)`。
+- **部署包里 `memory-section.md` 易滞后**：它会被灌进新设备的用户记忆；母版路径/钩子描述变了要同步改（v4 时把 `doc-driven-v3` 改成 `doc-driven-master`）。注意 `install.py` 对记忆段是**幂等**的——本机已存在则不会刷新，改完须手动同步本机 `~/.workbuddy/MEMORY.md`。
 
 ## 新设备迁移（2026-09-12 建）
 
@@ -51,7 +54,7 @@
 
 **关键坑**：钩子命令写的是解释器**绝对路径**（老设备 `E:/anaconda/python.exe`）——直接拷 `settings.json` 到新设备会因路径不存在而静默失效，**必须在目标机重新生成**。
 
-**一键通道**：`deploy-kit/install.py`（跨平台、幂等、改动前自动备份 `.bak-<日期>`、装完自检）。实测：首次 15/15 PASS、母版 `verify.py` 28/28 PASS；重复跑仍 15/15（钩子与记忆段提示"已跳过"）。
+**一键通道**：`deploy-kit/install.py`（跨平台、幂等、改动前自动备份 `.bak-<日期>`、装完自检）。实测：首次 15/15 PASS、母版 `verify.py` 35/35 PASS（模板态）；重复跑仍 15/15（钩子与记忆段提示"已跳过"）。母版安装路径为 `~/.workbuddy/templates/doc-driven-master/`（去版本号）。
 参数：`--dry-run` / `--home`（测试用）/ `--master-dir` / `--with-codebuddy`（钩子配置路径兜底）。
 
 **已实测确认**（2026-09-12）：WorkBuddy 桌面版**确实读取 `~/.workbuddy/settings.json` 的 `hooks`**，`UserPromptSubmit` 真实触发，注入内容原样进入会话上下文（每轮可见 `[文档驱动框架]` 提醒）。`--with-codebuddy` 仍保留作路径兜底。
@@ -63,9 +66,9 @@
 - **本质**：给无状态协作者（AI）配的体外记忆 + 作业纪律。不是"文档管理规范"。
 - **适用判据**：看**交接次数**（换会话/换人/隔期回来），约 3 次为盈亏平衡点；成本一次性、收益按次累积。
 - **钩子的机制意义**：前两层（事实层/行为层）本就有，钩子决定它们是否真被用到；消除"判断漏"，并让失效从静默变显性。但**只保证"看到"，不保证"做到"**。
-- **钩子的新增负债**：内嵌的纪律文字是 `00` 条款的副本 → 改母版不会自动同步，是新的"文档与现实打架"风险源。
+- **钩子 v1 的新增负债（已消除）**：v1 内嵌的纪律文字是 `00` 条款的副本 → 改母版不会自动同步。**v2 已改为实时读 `00` 文档，此负债清除**（2026-09-12）。
 - **真正的风险是文档膨胀**（约 800 行/单功能为红线），**该红线目前无强制机制**。实测事务伴侣 `04` 占文档总量 42%。
-- **改进落地情况**：① `04` 归档机制 → **v4 已落地**（触发式硬阈值）；② 800 行红线纳入 verify → **v4 已落地**（`04` 行数 / 里程碑数 / 验收表行数三项自动对账）；③ 钩子实时读 `00` 而非内嵌副本 → **仍未做**（钩子内嵌副本的同步耦合问题依旧存在）。
+- **改进落地情况**：① `04` 归档机制 → **v4 已落地**（触发式硬阈值）；② 800 行红线纳入 verify → **v4 已落地**（`04` 行数 / 里程碑数 / 验收表行数三项自动对账）；③ 钩子实时读 `00` 而非内嵌副本 → **2026-09-12 已落地（钩子 v2）**。
 - **长期交接场景的缺口**（见本目录 `交接与迭代优化清单.md`）→ 已于 v4 全部落地。
 
 ## 文档导读（2026-09-12）
@@ -82,6 +85,13 @@
 ```bash
 cd D:/000-me-work/top_design
 E:/anaconda/python.exe verify.py            # 模板态期望 35/35 PASS，退出码 0
-E:/anaconda/python.exe deploy-kit/sync-master.py   # 母版改完后同步副本（--check 只报告）
+E:/anaconda/python.exe deploy-kit/sync-master.py   # 母版改完后同步四条副本链路（--check 只报告）
+E:/anaconda/python.exe deploy-kit/package.py       # 重打 dist 的 zip（sync 之后跑）
 E:/anaconda/python.exe deploy-kit/install.py --home <临时目录>   # 模拟新设备自检，期望 15/15
+```
+
+钩子自测（路径必须用绝对路径，Git Bash 下 `$HOME` 不可靠）：
+
+```bash
+echo '{"cwd":"<项目目录>","hook_event_name":"SessionStart"}' | E:/anaconda/python.exe C:/Users/joe/.workbuddy/hooks/doc-driven-guard.py
 ```
