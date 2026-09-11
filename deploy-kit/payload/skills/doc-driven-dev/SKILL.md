@@ -15,7 +15,7 @@ agent_created: true
 - 判定方式：从 `cwd` 向上找 `开发驱动文档/00-驱动开发规则.md`（或项目根同名文件），命中才注入，非框架项目静默放行；
 - 早先"不建定时任务、由即时对齐审计替代"的裁决已被此钩子取代（钩子是推、审计是查，两者并存）。
 
-新项目未建框架 → 先执行姐妹技能 `doc-driven-framework-porting`（本地模板 v2 直接生成，三分钟建好）；已有框架 → 按下方纪律运行。**模板母版在 `D:\000-me-work\top_design`（v3，2026-09-12 定稿），技能 `templates/` 只是发布副本。**
+新项目未建框架 → 先执行姐妹技能 `doc-driven-framework-porting`（本地模板 **v3** 直接生成，三分钟建好）；已有框架 → 按下方纪律运行。**换新设备** → 见 `deploy-kit/README-新设备部署.md`（母版 `D:\000-me-work\top_design\deploy-kit\`）。**模板母版在 `D:\000-me-work\top_design`（v3，2026-09-12 定稿），技能 `templates/` 只是发布副本。**
 
 ## 进入项目的固定动作
 
