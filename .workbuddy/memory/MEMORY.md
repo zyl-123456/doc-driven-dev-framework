@@ -29,11 +29,20 @@
 | 载体 | 位置 | 角色 |
 |---|---|---|
 | **本母版** | `D:\000-me-work\top_design` | **唯一权威源**，改规则只改这里 |
-| 技能副本 | `~/.workbuddy/skills/doc-driven-framework-porting/templates/` | 冷启动 copy 源（发布副本）。**已同步为 v4**（2026-09-12）；旧版备份在 `~/.workbuddy/skills-backup/`（`...-v2-20260912/`、`...-templates-v3-20260912/`） |
-| 副本同步工具 | `deploy-kit/sync-master.py` | 一条命令同步**四条链路**（母版→payload/master、本机技能→payload/skills、**母版 hooks/→payload/hooks**、模板↔母版与实装钩子↔母版 两条一致性告警）。**母版改完必须跑** |
+| **母版工作区（新设备）** | 用户自选的**显式目录**（如 `D:\top_design`） | 新设备上的"顶层设计目录"，地位 = 本母版；由 `init-master-workspace.py` 建立。**显式而非隐藏**（人可直接打开/修改） |
+| 能力层 | `~/.workbuddy/`（技能 + hooks + settings.json + MEMORY.md） | 让机器**会**这套架构；由 `install.py` 安装 |
+| 技能副本 | `~/.workbuddy/skills/doc-driven-framework-porting/templates/` | 冷启动 copy 源（发布副本）。**已同步为 v4**（2026-09-12）；旧版备份在 `~/.workbuddy/skills-backup/` |
+| 副本同步工具 | `deploy-kit/sync-master.py` | 四条链路：母版→payload/master、本机技能→payload/skills、母版 hooks→payload/hooks、**母版→技能 templates（自动推送）** + 实装钩子一致性告警。**母版改完必须跑** |
 | 打包工具 | `deploy-kit/package.py` | 重打 `dist/` 的分发 zip（防手工打包漏文件），**sync 之后跑** |
+| 建工作区工具 | `deploy-kit/init-master-workspace.py` | 把 `payload/master` 铺成母版工作区（+ `hooks/` + `.gitignore` + 可选 `--init-git`），当场 verify 自验收 |
 | 行为层技能 | `~/.workbuddy/skills/doc-driven-dev/` | 运行态纪律，跨项目共用 |
 | 触发层钩子 | 权威源 `hooks/doc-driven-guard.py`；实装 `~/.workbuddy/hooks/doc-driven-guard.py` + `settings.json` 的 `hooks` | 平台强制注入纪律。**v2（2026-09-12）改为实时读项目 `00` 文档 + 注入动态快照，不再内嵌纪律副本** |
+
+**取源链路（新项目"从母版拷贝"的真正实现，别手工 cp）**：
+```
+母版工作区（唯一权威源）──sync-master.py 自动推──> 技能 templates/ ──建项目时拷贝──> <新项目>/开发驱动文档/
+```
+改了母版 → 跑 `sync-master.py` → 之后建的项目自动带最新规则。**手工 cp 绕过一致性检查且易漏文件。**
 | 迁移包 | `deploy-kit/`（本目录内） | 新设备一键部署（技能+钩子+配置+记忆+母版） |
 
 - **规矩**：母版改动 → 老大验收确认 → 再同步技能副本。**不许两边各改各的**。
@@ -55,6 +64,8 @@
 **关键坑**：钩子命令写的是解释器**绝对路径**（老设备 `E:/anaconda/python.exe`）——直接拷 `settings.json` 到新设备会因路径不存在而静默失效，**必须在目标机重新生成**。
 
 **一键通道**：`deploy-kit/install.py`（跨平台、幂等、改动前自动备份 `.bak-<日期>`、装完自检）。实测：首次 15/15 PASS、母版 `verify.py` 35/35 PASS（模板态）；重复跑仍 15/15（钩子与记忆段提示"已跳过"）。母版安装路径为 `~/.workbuddy/templates/doc-driven-master/`（去版本号）。参数：`--dry-run` / `--home`（测试用）/ `--master-dir` / `--with-codebuddy`（钩子配置路径兜底）。
+
+**新设备部署 = 两步**（在 `deploy-kit/` 里跑）：① `python install.py`（装能力层，报 15/15）② `python init-master-workspace.py --init-git`（把 `payload/master` 铺成**母版工作区**，报 6/6 + verify 35/35）。整理后目录与老设备 `top_design` 完全同构。**建议解压到不带空格的干净目录（如 `D:\top_design`）**。
 
 **两份说明文档（分工别混）**：`QUICKSTART-新设备手把手教学.md` = 面向**人**（口语、打比方、照抄话术、排错速查）；`README-新设备部署.md` = 面向**执行者/AI**（步骤表、安全设计、给 WorkBuddy 的执行指令）。**两份都随包分发**（在 zip 内，新设备离线可读）。
 
