@@ -5,10 +5,10 @@ install.py —— 文档驱动开发架构 · 新设备一键部署
 
 把本机跑通的整套「文档驱动开发架构」能力搬到一台新设备上，一次装齐四样：
   1. 行为层技能 doc-driven-dev            → ~/.workbuddy/skills/
-  2. 移植技能 doc-driven-framework-porting（含 v3 模板） → ~/.workbuddy/skills/
+  2. 移植技能 doc-driven-framework-porting（含 v4 模板） → ~/.workbuddy/skills/
   3. 触发层钩子 doc-driven-guard.py        → ~/.workbuddy/hooks/
   4. hooks 配置合并进 ~/.workbuddy/settings.json + 治理段追加进 ~/.workbuddy/MEMORY.md
-  5. 母版全套（含 README 总说明）          → ~/.workbuddy/templates/doc-driven-v3/
+  5. 母版全套（含 README 总说明）          → ~/.workbuddy/templates/doc-driven-master/
 
 用法（在任意已装 WorkBuddy 的机器上，用任意 Python 3.8+ 执行）：
     python install.py                     # 正常安装
@@ -78,7 +78,7 @@ def main():
     ap.add_argument("--home", default=os.path.expanduser("~"),
                     help="用户目录，默认 ~（主要给测试用）")
     ap.add_argument("--master-dir", default=None,
-                    help="母版安装位置，默认 <home>/.workbuddy/templates/doc-driven-v3")
+                    help="母版安装位置，默认 <home>/.workbuddy/templates/doc-driven-master")
     ap.add_argument("--dry-run", action="store_true", help="只报告，不写盘")
     ap.add_argument("--with-codebuddy", action="store_true",
                     help="同时写入 <home>/.codebuddy/settings.json（钩子配置路径兜底）")
@@ -86,7 +86,7 @@ def main():
 
     home = os.path.abspath(os.path.expanduser(args.home))
     wb = os.path.join(home, ".workbuddy")
-    master_dir = args.master_dir or os.path.join(wb, "templates", "doc-driven-v3")
+    master_dir = args.master_dir or os.path.join(wb, "templates", "doc-driven-master")
     dry = args.dry_run
 
     print("=" * 60)
@@ -294,8 +294,13 @@ def main():
                                cwd=master_dir, capture_output=True, text=True,
                                encoding="utf-8", timeout=60)
             tail = [l for l in r.stdout.splitlines() if l.startswith("验收结果")]
-            rec(r.returncode == 0, "母版 verify.py 自验收",
-                (tail[0] if tail else "退出码 %d" % r.returncode))
+            ok = r.returncode == 0
+            detail = tail[0] if tail else "退出码 %d" % r.returncode
+            # 若母版被装进某个 git 仓库内部（例如测试时装到项目子目录），
+            # "工作区干净"一项会受宿主仓库的未提交变更影响 —— 属环境因素，不是安装失败。
+            if not ok and "git 工作区干净" in r.stdout:
+                detail += "｜提示：母版位于某个 git 仓库内，该项受宿主仓库未提交变更影响（环境因素）"
+            rec(ok, "母版 verify.py 自验收", detail)
         except Exception as e:
             rec(False, "母版 verify.py 自验收", str(e))
 

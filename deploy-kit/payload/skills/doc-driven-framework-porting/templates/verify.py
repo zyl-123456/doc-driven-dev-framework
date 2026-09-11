@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-verify.py · {{PROJECT}} —— 总验收命令（文档驱动开发框架 v3 通用版）
+verify.py · {{PROJECT}} —— 总验收命令（文档驱动开发框架 v4 通用版）
 
 设计依据：开发驱动文档/00-驱动开发规则.md 第八节「总验收命令」六项要求
   1. 人类可独立执行：命令输出即结论，不依赖 AI 转述
@@ -11,13 +11,18 @@ verify.py · {{PROJECT}} —— 总验收命令（文档驱动开发框架 v3 �
   5. 自检运行环境：前置校验解释器版本
   6. 结论绑定输入版本：输出 git commit 哈希（若有）
 
+v4 新增「交接就绪对账」（第 5 节）：
+      框架里最容易退化的不是硬条款，而是"每轮都要更新"的软信息。
+      凡没被脚本检查的规则，长期看都会退化 —— 所以把最容易被忘的三件事
+      （当前快照、环境节、技术债节）变成可对账项，并对文档规模自动限流。
+
 用法：
   python verify.py                              # 通用检查
   E:\\anaconda\\python.exe verify.py             # Windows 工作站推荐口径
 
-版本：v3.0.0（模板母版 2026-09-12）
-说明：本脚本与项目无关，复制到新项目后无需改动即可运行；项目专属检查项
-      写在文件末尾「领域扩展检查区」，按提示增删即可。
+版本：v4.0.0（模板母版 2026-09-12）
+说明：本脚本与项目无关，复制到新项目后**只需改一处**（把 MODE 改为 "project"）即可运行；
+      项目专属检查项写在文件末尾「领域扩展检查区」，按提示增删即可。
 """
 
 import os
@@ -29,12 +34,22 @@ import sys
 # 可调开关
 # ============================================================
 
+# 【复制到新项目后必改这一处】
+#   "template" —— 模板母版工作区：占位符与未填写的交接信息只报 INFO，不判失败（模板本该是空的）
+#   "project"  —— 真实项目：占位符未清零、交接信息未填 一律 FAIL
+MODE = "template"
+
+# 兼容旧开关（v3 时代的 STRICT_PLACEHOLDER）：
+# 若你手上的副本改过它，设为 True 也等效于 MODE = "project" 的占位符检查。
+STRICT_PLACEHOLDER = False
+
+# 文档规模阈值（对应 00 文档第九节「触发式归档」硬阈值；可按项目规模调整，但不得取消）
+MAX_04_LINES = 400        # 04 全文行数上限
+MAX_MILESTONES = 20       # 04 里程碑条数上限
+MAX_ACCEPT_ROWS = 30      # 04 验收结论表行数上限
+
 # 文档目录探测顺序（按需增删；脚本会取第一个真正含 00 文档的目录）
 DOC_DIR_CANDIDATES = ["开发驱动文档", ".", "docs/开发驱动文档", "文档/开发驱动文档"]
-
-# 是否把"占位符未清零"视为失败。
-# 模板母版工作区保持 False（母版本就该有占位符）；项目副本建议改 True。
-STRICT_PLACEHOLDER = False
 
 # 强制要求存在的最小里程碑 / 设计编号（留空则不检查具体编号）
 REQUIRED_MILESTONE = "M-000"
@@ -62,7 +77,13 @@ RULES_SECTIONS = [
     "权责",
     "安全底线与交付纪律",
     "领域扩展",
+    "并行开发约定",
 ]
+
+# 交接就绪三行（START_HERE「当前快照」）
+HANDOVER_LABELS = ["正在做", "卡在哪", "下一步"]
+
+strict_mode = (MODE == "project") or STRICT_PLACEHOLDER
 
 # ============================================================
 # 环境自检（要求 5，前置）
@@ -112,6 +133,7 @@ if DOC is None:
 
 rel = os.path.relpath(DOC, BASE).replace("\\", "/")
 print("[ENV] PASS: 文档目录 = %s" % ("<项目根>" if rel == "." else rel))
+print("[ENV] MODE = %s（%s）" % (MODE, "模板母版态" if MODE == "template" else "项目态"))
 print()
 
 # ============================================================
@@ -208,15 +230,67 @@ if os.path.isfile(sh_path):
 if holders:
     msg = "剩余占位符 %d 种: %s" % (
         len(holders), ", ".join(sorted(holders)[:6]) + (" …" if len(holders) > 6 else ""))
-    if STRICT_PLACEHOLDER:
+    if strict_mode:
         check("占位符已全部清零", False, msg)
     else:
-        print("[INFO] 占位符检查：%s（模板母版属正常；项目副本可把 STRICT_PLACEHOLDER 改为 True）" % msg)
+        print("[INFO] 占位符检查：%s（模板母版属正常；项目副本请把 MODE 改为 \"project\"）" % msg)
 else:
     check("占位符已全部清零", True)
 
 # ============================================================
-# 5. 版本库卫生（落档纪律第 2 条）
+# 5. 交接就绪对账（v4 新增：长期项目 / 高频交接专用）
+# ============================================================
+# 设计意图：框架里最容易退化的不是硬条款，而是"每轮都要更新"的软信息。
+# 凡没被脚本检查的规则，长期看都会退化 —— 所以把最容易被忘的几件事变成可对账项。
+
+# 5.1 当前快照（交接第一站）
+check("START_HERE 含「当前快照」小节", "当前快照" in sh,
+      "交接者第一站，缺了只能自己翻 04 拼状态")
+
+missing_labels = [k for k in HANDOVER_LABELS if k not in sh]
+check("当前快照三行齐全（正在做 / 卡在哪 / 下一步）", not missing_labels,
+      ("缺: %s" % "、".join(missing_labels)) if missing_labels else "")
+
+unfilled = []
+for k in HANDOVER_LABELS:
+    m = re.search(r"\*\*" + k + r"\*\*[：:]\s*(.*)", sh)
+    val = m.group(1).strip() if m else ""
+    if (not val) or "{{" in val:
+        unfilled.append(k)
+detail = ("未填写: %s" % "、".join(unfilled)) if unfilled else "三行均已填实"
+if strict_mode:
+    check("当前快照三行已填实（非占位符）", not unfilled, detail)
+else:
+    print("[INFO] 当前快照填写情况：%s（模板母版属正常；项目副本请把 MODE 改为 \"project\"）" % detail)
+
+# 5.2 环境与运行节（接手第一站）
+check("03 含「环境与运行」节", "环境与运行" in plan,
+      "接手第一站：项目跑不起来时唯一的落脚点")
+
+# 5.3 技术债登记节（给悬置项一个位置）
+check("04 含「技术债」登记节", "技术债" in log,
+      "给「已知但暂不处理」的问题一个位置，否则会散落在代码注释里")
+
+# 5.4 文档规模阈值（00 第九节触发式归档，防膨胀）
+log_lines = len(log.splitlines())
+# 先剥离 HTML 注释：注释里的格式示例（如「### M-001 {{里程碑名称}}」）不该被计入实际条数
+log_clean = re.sub(r"<!--.*?-->", "", log, flags=re.S)
+milestones = len(re.findall(r"^###\s+M-\d{3}", log_clean, re.M))
+accept_rows = max(0, len(re.findall(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|", log_clean, re.M)))
+
+over = []
+if log_lines > MAX_04_LINES:
+    over.append("04 行数 %d > %d" % (log_lines, MAX_04_LINES))
+if milestones > MAX_MILESTONES:
+    over.append("里程碑 %d 条 > %d" % (milestones, MAX_MILESTONES))
+if accept_rows > MAX_ACCEPT_ROWS:
+    over.append("验收结论 %d 行 > %d" % (accept_rows, MAX_ACCEPT_ROWS))
+check("04 文档规模在阈值内（防膨胀）", not over,
+      "；".join(over) if over else "行数 %d/%d、里程碑 %d/%d 条、验收结论 %d/%d 行"
+      % (log_lines, MAX_04_LINES, milestones, MAX_MILESTONES, accept_rows, MAX_ACCEPT_ROWS))
+
+# ============================================================
+# 6. 版本库卫生（落档纪律第 2 条）
 # ============================================================
 
 
@@ -245,7 +319,7 @@ else:
     print("[INFO] 当前目录非 git 仓库，版本库卫生检查跳过")
 
 # ============================================================
-# 6. 领域扩展检查区（项目专属，按需增删）
+# 7. 领域扩展检查区（项目专属，按需增删）
 # ============================================================
 # 复制到新项目后，在这里补项目自己的硬检查，例如：
 #

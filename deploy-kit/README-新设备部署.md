@@ -3,7 +3,7 @@
 > **这是干什么的**：让一台**新电脑**上的 WorkBuddy，也具备跟老电脑一模一样的「文档驱动开发架构」能力——
 > 会建框架、会按纪律干活、**而且不会忽略它**。
 >
-> 包版本：v3　|　打包日期：2026-09-12　|　来源母版：`D:\000-me-work\top_design`
+> 包版本：v4　|　打包日期：2026-09-12　|　来源母版：`D:\000-me-work\top_design`
 > 部署方式：**把整个 `deploy-kit/` 文件夹拷到新设备，跑一次安装**。幂等、可重复跑、不破坏已有配置。
 
 ---
@@ -15,7 +15,7 @@
 | # | 东西 | 在老设备的位置 | 作用 | 漏了会怎样 |
 |---|---|---|---|---|
 | 1 | 行为层技能 `doc-driven-dev` | `~/.workbuddy/skills/` | 干活时的纪律（闭环六步、权限矩阵、收尾四步） | 我干活没有章法 |
-| 2 | 移植技能 `doc-driven-framework-porting` | `~/.workbuddy/skills/` | 一键给新项目建框架（含 v3 模板） | 建不出框架 |
+| 2 | 移植技能 `doc-driven-framework-porting` | `~/.workbuddy/skills/` | 一键给新项目建框架（含 v4 模板） | 建不出框架 |
 | 3 | **触发层钩子** `doc-driven-guard.py` | `~/.workbuddy/hooks/` | 每次会话/提问强制把纪律塞给我 | **框架会被忽略**（这是关键） |
 | 4 | 钩子配置 + 治理记忆 | `~/.workbuddy/settings.json`<br>`~/.workbuddy/MEMORY.md` | 让钩子真的被调用、让我一进项目就知道有这套东西 | 钩子装了也不跑 |
 
@@ -58,9 +58,10 @@ python install.py            # 想看会做什么先加 --dry-run
 │   ├── doc-driven-dev/        ← 行为层技能
 │   └── doc-driven-framework-porting/
 │       ├── SKILL.md
-│       └── templates/         ← v3 七件套（新项目直接取用）
+│       └── templates/         ← v4 七件套（新项目直接取用）
 └── templates/
-    └── doc-driven-v3/         ← 母版全套 10 份（八件套 + 文档导读 + 框架评价与边界，要改规则改这里）
+    └── doc-driven-master/     ← 母版全套 11 份（八件套 + 文档导读 + 框架评价 + 交接与迭代优化清单）
+                                  ※ 目录名固定为 master，不含版本号，以后升级不会留旧目录
 ```
 
 装完的效果：**每次开新会话、每次你发消息，平台都会先跑一次钩子**；它在当前项目里找 `开发驱动文档/00-驱动开发规则.md`，找到就把纪律注入给我，找不到就静默放行（不打扰你在别的项目干活）。
@@ -118,7 +119,8 @@ Windows 上 WorkBuddy 自带托管 Python（`~/.workbuddy/binaries/python/`）�
 3. 重新打包，把 `dist/` 里的 zip 拷到新设备；
 4. 新设备重跑 `python install.py`（幂等，不会重复挂钩子）。
 
-也可以直接改新设备的母版 `~/.workbuddy/templates/doc-driven-v3/`，改完同步到 `~/.workbuddy/skills/doc-driven-framework-porting/templates/`。**但切记母版是唯一权威源，不要两边各改各的**——多副本是这套框架唯一的结构性风险点。
+也可以直接改新设备的母版 `~/.workbuddy/templates/doc-driven-master/`，改完同步到 `~/.workbuddy/skills/doc-driven-framework-porting/templates/`。**但切记母版是唯一权威源，不要两边各改各的**——多副本是这套框架唯一的结构性风险点。
+（若你此前装过旧版，`~/.workbuddy/templates/doc-driven-v3/` 会残留，可手动删掉。）
 
 **Q：会不会影响新设备上其他项目的正常工作？**
 不会。钩子只认"带框架的项目"，其余目录直接输出"放行、不改行为"。而且它永远不会阻断你——脚本任何异常都只会安静放行。
