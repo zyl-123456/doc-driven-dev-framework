@@ -23,30 +23,48 @@
 
 **最容易踩的坑**：第 3、4 项里的钩子命令写的是**解释器的绝对路径**（老设备是 `E:\anaconda\python.exe`）。直接把 `settings.json` 拷到新设备，路径不存在 → 钩子静默失效。所以必须在新设备上**重新生成**配置——这正是 `install.py` 要做的事。
 
-## 二、三步装好（大白话版）
+## 二、装好只要三步（大白话版）
+
+> **推荐摆法**：解压到一个**干净的顶层设计目录**（如 `D:\top_design`，**路径别带空格**），
+> 然后第 2、3 步都在 `deploy-kit/` 里跑。这样你会得到一个跟老设备同构的「母版工作区」。
 
 ### 第 1 步：把包带到新设备
 
-`deploy-kit/` 是个普通文件夹，怎么传都行——U 盘拷、微信传文件、网盘下载、或者丢进 Git 仓库拉下来。放到新设备上任意位置，比如 `D:\deploy-kit`（Mac 放 `~/deploy-kit`）。
+把这个 **zip** 拷过去（U 盘 / 微信传文件 / 网盘），解压到你的顶层设计目录里，比如 `D:\top_design`（Mac 放 `~/top_design`）。
+解压完会在里面得到一个 `deploy-kit` 文件夹。
 
-### 第 2 步：让新设备的 WorkBuddy 自己装（推荐）
+### 第 2 步：装能力层（让机器"会"这套架构）
 
-新设备上打开 WorkBuddy，**把下面这段话原样发给它**：
+新设备上打开 WorkBuddy，**把下面这段话原样发给它**（路径按实际改）：
 
-> 我换新设备了。请读取 `D:\deploy-kit\README-新设备部署.md`（路径按实际改），按里面的步骤把「文档驱动开发架构」部署到本机，装完把自检结果告诉我。
+> 我换新设备了，顶层设计目录是 `D:\top_design`。请读取 `D:\top_design\deploy-kit\README-新设备部署.md`，
+> 按说明跑 `install.py` 把「文档驱动开发架构」部署到本机（先 `--dry-run` 再正式装），装完把自检结果告诉我。
 
 它会读这份说明、跑安装脚本、把结果报给你。**你不需要懂命令行。**
 
-### 第 3 步（备选）：自己跑一行命令
-
-如果你更想自己动手，在有 Python 3.8+ 的终端里：
+想自己动手也行，在有 Python 3.8+ 的终端里：
 
 ```bash
-cd /d D:\deploy-kit          # Mac/Linux: cd ~/deploy-kit
-python install.py            # 想看会做什么先加 --dry-run
+cd /d D:\top_design\deploy-kit     # Mac/Linux: cd ~/top_design/deploy-kit
+python install.py                  # 想看会做什么先加 --dry-run
 ```
 
-装完会打印 `部署结果: 15/15 PASS` 之类的报告。
+装完会打印 `部署结果: 15/15 PASS`。
+
+### 第 3 步：建「母版工作区」（让框架有个"家"）
+
+上一步把母版埋在了 `payload/master/`（三层深）。这一步把它**铺到顶层目录的根**，变成一个你能直接打开、直接改的母版：
+
+```bash
+python init-master-workspace.py --init-git
+```
+
+（不填 `--target` 就是 `deploy-kit` 的上一级，也就是你的 `D:\top_design`。）
+
+跑完会打印 `整理结果: 6/6 PASS`，并当场用 `verify.py` 自验收（期望 **35/35 PASS**）。
+之后 `D:\top_design` 就是一个跟老设备**完全同构**的母版工作区——新项目都从这里取源。
+
+> 详细说明与"平话版"请看同目录 `QUICKSTART-新设备手把手教学.md`。
 
 ## 三、装完你会得到什么
 
@@ -70,6 +88,8 @@ python install.py            # 想看会做什么先加 --dry-run
 
 > **钩子 v2 要点**：它**不内嵌任何纪律文字**，全靠实时读项目文档——所以母版改了钩子立刻跟着变，不存在"副本漂移"；每轮注入的是会变的项目快照，不是固定复读，避免看几轮就麻木。
 
+> **另有一样东西不在这里**：第 3 步建立的**母版工作区**（默认在 `deploy-kit` 的上一级，即你的顶层设计目录）。它是独立目录，不藏在 `~/.workbuddy/` 里——因为它是给人直接看、直接改的。
+
 ## 四、验证装好了没有（关键一步）
 
 钩子的配置文件路径这件事，官方 IDE 文档写的是 `~/.codebuddy/settings.json`，本包默认写的是 `~/.workbuddy/settings.json`。**源设备已实测确认后者在 WorkBuddy 桌面版上有效**（2026-09-12：挂载后下一轮对话的上下文里，原样出现了 `[文档驱动框架]` 注入提醒）。新设备仍建议照下面走一遍——版本或安装形态可能不同。
@@ -91,6 +111,20 @@ python install.py            # 想看会做什么先加 --dry-run
 
 我会调用移植技能，在三分钟内生成整套框架（七件套 + 占位符替换 + git 首提交 + `verify.py` 全绿），然后你就可以用大白话说需求了。
 
+**它从哪儿取源？**——从**技能的 `templates/`**。而这个 `templates/` 由母版工作区经 `sync-master.py` 持续同步：
+
+```
+顶层设计目录（母版 · 唯一权威源）
+      │  sync-master.py 自动推送（母版 → 技能模板）
+      ▼
+~/.workbuddy/skills/doc-driven-framework-porting/templates/
+      │  建新项目时技能从这里拷贝
+      ▼
+<新项目>/开发驱动文档/   ← 七件套落地
+```
+
+所以**要让新项目带上最新规则，只需改母版 → 跑一次 `sync-master.py`**；不需要每次手动 cp 文件，也不会出现"母版改了、建出来的项目还是旧的"。这条链路是框架里被特意加固过的（以前只告警、不自动推，现在改为自动同步）。
+
 之后每一轮开发的固定节奏：**你说要什么 → 我落档拆解设计 → 写代码记账 → 你跑 `python verify.py` 验收 → 反馈进 `01` 转成新需求**。收尾四步（结论落档 → 验收全绿 → 提交干净 → 结构变更同步入口）缺一项都算没干完。
 
 ## 六、安装脚本干了什么（可审阅，别只信我一句话）
@@ -108,6 +142,17 @@ python install.py            # 想看会做什么先加 --dry-run
 **幂等**：重复跑不会重复挂钩子、不会重复追加记忆段（实测第二次跑 15/15 PASS，钩子与记忆均提示"已跳过"）。
 **可回退**：任何被改动的文件都留有 `.bak-<日期>`，删掉新增目录即可完全还原。
 
+### 建母版工作区的脚本干了什么（`init-master-workspace.py`）
+
+| 步骤 | 动作 | 安全设计 |
+|---|---|---|
+| 0 | 检查 `payload/master` 齐全 + **拒绝把母版铺进 `deploy-kit` 内部** | 防把包结构搞乱 |
+| 1 | 母版 11 份 → 工作区根 | 内容相同则跳过；覆盖前备份 |
+| 2 | `payload/hooks/` → 工作区 `hooks/` | 同上（幂等） |
+| 3 | 写 `.gitignore` | 已存在则**不动你的内容** |
+| 4 | （`--init-git`）`git init -b main` + 首次提交 | 已在 git 仓库内则跳过，不嵌套建库 |
+| 5 | 跑工作区 `verify.py` 自验收 | 当场验证，期望 35/35 |
+
 ## 七、常见问题
 
 **Q：钩子没生效怎么办？**
@@ -116,15 +161,24 @@ python install.py            # 想看会做什么先加 --dry-run
 **Q：新设备没装 Python 怎么办？**
 Windows 上 WorkBuddy 自带托管 Python（`~/.workbuddy/binaries/python/`），让新设备的 WorkBuddy 自己跑安装脚本即可——它是用 WorkBuddy 手上的解释器执行的。Mac 一般自带 `python3`。
 
-**Q：以后老设备改了规则，新设备怎么同步？**
-推荐走一条固定流水线（老设备上）：
-1. 改母版（`D:\000-me-work\top_design` 根下的 md / py）；
-2. 跑 `python deploy-kit/sync-master.py`，把母版同步进部署包副本（先加 `--check` 可只看差异；它会逐份比对，不会漏文件）；
-3. 重新打包，把 `dist/` 里的 zip 拷到新设备；
-4. 新设备重跑 `python install.py`（幂等，不会重复挂钩子）。
+**Q：以后在一台设备上改了规则，怎么同步到其它设备？**
+**先分清改的是「母版」还是「项目」**：项目文档（`01`~`04`）只属于那个项目，不用同步；要同步的是**母版**（顶层设计目录）。
 
-也可以直接改新设备的母版 `~/.workbuddy/templates/doc-driven-master/`，改完同步到 `~/.workbuddy/skills/doc-driven-framework-porting/templates/`。**但切记母版是唯一权威源，不要两边各改各的**——多副本是这套框架唯一的结构性风险点。
-（若你此前装过旧版，`~/.workbuddy/templates/doc-driven-v3/` 会残留，可手动删掉。）
+在**有母版工作区的设备**上走一条固定流水线：
+
+1. 改母版（顶层设计目录根下的 md / py，或 `hooks/`）；
+2. 跑 `python deploy-kit/sync-master.py` —— 它会一次做完三件正向同步：
+   - 母版 → `payload/master`（部署包副本）
+   - **母版 → 技能 `templates/`**（保证建新项目用最新模板）
+   - 母版 `hooks/` → `payload/hooks`
+   （先加 `--check` 可只看差异，不写盘；也会顺带告警"本机实装钩子是否落后"）；
+3. 跑 `python deploy-kit/package.py` 重打 zip；
+4. 其它设备：拷过去重跑 `python install.py` + `python init-master-workspace.py`（都是幂等，不会重复挂钩子）。
+
+**只在单台设备上用**的话，第 2 步跑完就够了——技能模板已经跟上，建新项目即可。
+
+> ⚠️ **母版是唯一权威源**。别拿项目里的副本回头改母版，也别两台设备各改各的——多副本是这套框架唯一的结构性风险点。
+> （若你此前装过旧版，`~/.workbuddy/templates/doc-driven-v3/` 会残留，可手动删掉。）
 
 **Q：会不会影响新设备上其他项目的正常工作？**
 不会。钩子只认"带框架的项目"，其余目录直接输出"放行、不改行为"。而且它永远不会阻断你——脚本任何异常都只会安静放行。
@@ -133,7 +187,13 @@ Windows 上 WorkBuddy 自带托管 Python（`~/.workbuddy/binaries/python/`）�
 
 **给新设备 WorkBuddy 的执行指令（可直接粘贴）**：
 
-> 读取本目录 `README-新设备部署.md`，然后执行 `python install.py`（先跑 `--dry-run` 看一遍也可以）。
-> 装完必须做到：① 报告最终 PASS/FAIL 数量；② 实测钩子脚本在"框架项目"和"非框架项目"下的两种输出；
-> ③ 复核 `~/.workbuddy/settings.json` 的 `hooks` 字段已写入且原配置未丢；④ 把母版 `verify.py` 跑出 35/35 PASS；
-> ⑤ 告诉我"重启 WorkBuddy + 发一条消息看有没有注入提醒"这条验证怎么做。
+> 把本目录（`deploy-kit/`）部署到本机，做两件事：
+> ① 跑 `python install.py`（先 `--dry-run` 看一遍再正式装）——装能力层；
+> ② 跑 `python init-master-workspace.py --init-git`——把上一级目录整理成「母版工作区」。
+> 装完必须做到：
+>  a. 报告两份报告的最终 PASS/FAIL 数量；
+>  b. 实测钩子脚本在"框架项目"和"非框架项目"下的两种输出；
+>  c. 复核 `~/.workbuddy/settings.json` 的 `hooks` 字段已写入且原配置未丢；
+>  d. 把母版工作区的 `verify.py` 跑出 35/35 PASS；
+>  e. 告诉我"重启 WorkBuddy + 发一条消息看有没有注入提醒"这条验证怎么做；
+>  f. 复述一遍"以后新项目从哪里取源、改了母版后要跑哪条命令"，让我确认你理解对了。

@@ -12,9 +12,9 @@ sync-master.py —— 把母版工作区与技能的最新内容同步到部署�
     1. 母版目录 → deploy-kit/payload/master/          （母版发布副本）
     2. 本机技能 → deploy-kit/payload/skills/          （技能发布副本）
     3. 母版 hooks/ → deploy-kit/payload/hooks/        （触发层钩子发布副本）
-    4. 一致性告警（两条）：
-       a. 母版七件套 ↔ 技能 templates/七件套           （防技能模板落后于母版）
-       b. 母版 hooks/ ↔ 本机实装钩子                   （防母版改了钩子却没重装）
+    4. 副本回推与告警（两条）：
+       a. 母版 → 技能 templates/  （先把技能模板顶到最新，防"建新项目拿到旧模板"）
+       b. 母版 hooks/ ↔ 本机实装钩子 告警（防母版改了钩子却没重装）
 
 用法：
     python sync-master.py                     # 比对并同步
@@ -121,23 +121,36 @@ def report(label, src_root, dst_root, dry):
     return len(same), len(lag), len(orphan)
 
 
-def check_templates(master_dir, skills_root):
-    """告警：技能 templates/ 是否落后于母版（母版是唯一权威源）。"""
+def sync_templates(master_dir, skills_root, dry):
+    """把母版七件套推送到技能 templates/（母版 = 唯一权威源，副本跟随）。
+
+    为什么是"自动推"而不是"只告警"：
+        移植技能建新项目时，取源就是技能自带的 templates/。
+        母版改了却不同步 templates/，建出来的新项目就带着旧模板 ——
+        而用户看到的却是"我从母版建的"，属于隐性漂移。
+        所以这里在同步模式下直接覆盖（副本方向永远是 母版 → 各副本）。
+    """
     tpl = os.path.join(skills_root, "doc-driven-framework-porting", "templates")
     if not os.path.isdir(tpl):
-        print("\n【母版 ↔ 技能模板 一致性】\n  跳过：未找到 %s" % tpl)
+        print("\n【母版 → 技能 templates/】\n  跳过：未找到 %s（技能未装？）" % tpl)
         return 0
     lag = []
     for n in SEVEN:
         a, b = os.path.join(master_dir, n), os.path.join(tpl, n)
         if not os.path.isfile(b) or not filecmp.cmp(a, b, shallow=False):
             lag.append(n)
-    print("\n【母版 ↔ 技能模板 一致性】")
-    if lag:
-        print("  ⚠ 技能 templates/ 落后于母版 %d 份：%s" % (len(lag), ", ".join(lag)))
-        print("    母版是唯一权威源 —— 请把母版这 %d 份覆盖到 %s" % (len(lag), tpl))
-    else:
-        print("  ✓ 技能 templates/ 与母版七件套完全一致")
+    print("\n【母版 → 技能 templates/】")
+    if not lag:
+        print("  ✓ 技能 templates/ 与母版七件套完全一致（%d 份）" % len(SEVEN))
+        return 0
+    if dry:
+        print("  %d 份待同步：%s" % (len(lag), ", ".join(lag)))
+        print("  结论：--check 未写盘（正式跑会推送到 %s）" % tpl)
+        return len(lag)
+    for n in lag:
+        shutil.copy2(os.path.join(master_dir, n), os.path.join(tpl, n))
+    print("  已同步 %d 份 → %s" % (len(lag), tpl))
+    print("  （母版是唯一权威源；技能 templates/ 是发布副本，永远跟随母版）")
     return len(lag)
 
 
@@ -220,7 +233,7 @@ def main():
            os.path.join(master, "hooks"), os.path.join(PAYLOAD, "hooks"), dry)
 
     # 链路 4：一致性告警（模板 + 实装钩子）
-    tpl_lag = check_templates(master, skills_src)
+    tpl_lag = sync_templates(master, skills_src, dry)
     hook_lag = check_hook(master, os.path.expanduser("~"))
 
     print("\n" + "=" * 62)

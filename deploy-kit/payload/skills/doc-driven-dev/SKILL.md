@@ -16,7 +16,7 @@ agent_created: true
 - 判定方式：从 `cwd` 向上找 `开发驱动文档/00-驱动开发规则.md`（或项目根同名文件），命中才注入，非框架项目静默放行；任何异常都输出 `{"continue": true}`，绝不阻断；
 - 早先"不建定时任务、由即时对齐审计替代"的裁决已被此钩子取代（钩子是推、审计是查，两者并存）。
 
-新项目未建框架 → 先执行姐妹技能 `doc-driven-framework-porting`（本地模板 **v4** 直接生成，三分钟建好）；已有框架 → 按下方纪律运行。**换新设备** → 见 `deploy-kit/README-新设备部署.md`（母版 `D:\000-me-work\top_design\deploy-kit\`）。**模板母版在 `D:\000-me-work\top_design`（**v4**，2026-09-12 定稿），技能 `templates/` 只是发布副本。**
+新项目未建框架 → 先执行姐妹技能 `doc-driven-framework-porting`（本地模板 **v4** 直接生成，三分钟建好）；已有框架 → 按下方纪律运行。**换新设备** → 见 `deploy-kit/README-新设备部署.md` 或人看的 `QUICKSTART-新设备手把手教学.md`（两步：`install.py` 装能力层 + `init-master-workspace.py --init-git` 建**母版工作区 / 顶层设计目录**）。**模板母版** = 母版工作区（老设备为 `D:\000-me-work\top_design`；新设备为自选的顶层设计目录，如 `D:\top_design`）——**它是唯一权威源**，技能 `templates/` 只是发布副本；改了母版必须跑 `sync-master.py`（它会把母版**自动推到技能 templates**，这样建新项目才带最新规则）。
 
 ## 进入项目的固定动作
 

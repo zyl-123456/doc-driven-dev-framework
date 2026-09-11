@@ -324,7 +324,10 @@ def finish():
         print("  1. 重启 WorkBuddy（或开一个新会话），让钩子配置生效；")
         print("  2. 在任意项目里发一条消息，观察上下文是否出现「[文档驱动框架]」提醒；")
         print("  3. 若没有生效，用 --with-codebuddy 重跑一次（钩子配置路径兜底）；")
-        print("  4. 新项目开工：对 WorkBuddy 说「给 XX 项目建文档驱动架构」。")
+        print("  4. 【可选但推荐】把本包整理成「母版工作区」（顶层设计目录）：")
+        print("     python init-master-workspace.py --init-git")
+        print("     之后新项目都从这个母版取源，改母版后跑 sync-master.py 即可保持各副本同步；")
+        print("  5. 新项目开工：对 WorkBuddy 说「给 XX 项目建文档驱动架构」。")
     return 0 if not bad else 1
 
 
