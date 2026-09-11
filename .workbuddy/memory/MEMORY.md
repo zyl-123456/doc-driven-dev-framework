@@ -54,8 +54,11 @@
 
 **关键坑**：钩子命令写的是解释器**绝对路径**（老设备 `E:/anaconda/python.exe`）——直接拷 `settings.json` 到新设备会因路径不存在而静默失效，**必须在目标机重新生成**。
 
-**一键通道**：`deploy-kit/install.py`（跨平台、幂等、改动前自动备份 `.bak-<日期>`、装完自检）。实测：首次 15/15 PASS、母版 `verify.py` 35/35 PASS（模板态）；重复跑仍 15/15（钩子与记忆段提示"已跳过"）。母版安装路径为 `~/.workbuddy/templates/doc-driven-master/`（去版本号）。
-参数：`--dry-run` / `--home`（测试用）/ `--master-dir` / `--with-codebuddy`（钩子配置路径兜底）。
+**一键通道**：`deploy-kit/install.py`（跨平台、幂等、改动前自动备份 `.bak-<日期>`、装完自检）。实测：首次 15/15 PASS、母版 `verify.py` 35/35 PASS（模板态）；重复跑仍 15/15（钩子与记忆段提示"已跳过"）。母版安装路径为 `~/.workbuddy/templates/doc-driven-master/`（去版本号）。参数：`--dry-run` / `--home`（测试用）/ `--master-dir` / `--with-codebuddy`（钩子配置路径兜底）。
+
+**两份说明文档（分工别混）**：`QUICKSTART-新设备手把手教学.md` = 面向**人**（口语、打比方、照抄话术、排错速查）；`README-新设备部署.md` = 面向**执行者/AI**（步骤表、安全设计、给 WorkBuddy 的执行指令）。**两份都随包分发**（在 zip 内，新设备离线可读）。
+
+**Python 前置（新设备）**：钩子与安装脚本都是 Python 程序，新设备必须有 Python。两条路线——**省事**：让 WorkBuddy 用自带托管 Python 跑 `install.py`（快，但钩子绑在托管 Python 路径上，WorkBuddy 大版本升级换 Python 后可能失效，需重跑）；**稳妥**：新设备自装独立 Python（建议 **E 盘**）再跑，钩子绑定稳定路径。
 
 **已实测确认**（2026-09-12）：WorkBuddy 桌面版**确实读取 `~/.workbuddy/settings.json` 的 `hooks`**，`UserPromptSubmit` 真实触发，注入内容原样进入会话上下文（每轮可见 `[文档驱动框架]` 提醒）。`--with-codebuddy` 仍保留作路径兜底。
 
