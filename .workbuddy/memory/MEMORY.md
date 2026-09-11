@@ -33,7 +33,7 @@
 | 能力层 | `~/.workbuddy/`（技能 + hooks + settings.json + MEMORY.md） | 让机器**会**这套架构；由 `install.py` 安装 |
 | 技能副本 | `~/.workbuddy/skills/doc-driven-framework-porting/templates/` | 冷启动 copy 源（发布副本）。**已同步为 v4**（2026-09-12）；旧版备份在 `~/.workbuddy/skills-backup/` |
 | 副本同步工具 | `deploy-kit/sync-master.py` | 四条链路：母版→payload/master、本机技能→payload/skills、母版 hooks→payload/hooks、**母版→技能 templates（自动推送）** + 实装钩子一致性告警。**母版改完必须跑** |
-| 打包工具 | `deploy-kit/package.py` | 重打 `dist/` 的分发 zip（防手工打包漏文件），**sync 之后跑** |
+| 打包工具 | `deploy-kit/package.py` | **同时产出 `zip` + `tar.gz`**（内容一致）。跨系统传含中文名的包**优先 tar.gz**（见坑表）。**sync 之后跑** |
 | 建工作区工具 | `deploy-kit/init-master-workspace.py` | 把 `payload/master` 铺成母版工作区（+ `hooks/` + `.gitignore` + 可选 `--init-git`），当场 verify 自验收 |
 | 行为层技能 | `~/.workbuddy/skills/doc-driven-dev/` | 运行态纪律，跨项目共用 |
 | 触发层钩子 | 权威源 `hooks/doc-driven-guard.py`；实装 `~/.workbuddy/hooks/doc-driven-guard.py` + `settings.json` 的 `hooks` | 平台强制注入纪律。**v2（2026-09-12）改为实时读项目 `00` 文档 + 注入动态快照，不再内嵌纪律副本** |
@@ -56,6 +56,9 @@
 - **母版工作区已建 git 库**（2026-09-12）：`main` 分支，`.gitattributes` 强制全库 LF、`core.autocrlf false`、`core.quotepath false`；`/dist/` 打包产物不入库（用 deploy-kit 重新生成）。收尾四步的"提交干净"在本工作区**可执行**。
 - **钩子提取正文要认两种列表**（钩子 v2 首测命中）：`00` 里「落档纪律」用**有序列表** `1. 2.`、其他节多用无序 `- `；只认一种会静默漏提取。写法：`re.match(r"^(?:[-*]|\d+[.)])\s+(.*)$", s)`。
 - **部署包里 `memory-section.md` 易滞后**：它会被灌进新设备的用户记忆；母版路径/钩子描述变了要同步改（v4 时把 `doc-driven-v3` 改成 `doc-driven-master`）。注意 `install.py` 对记忆段是**幂等**的——本机已存在则不会刷新，改完须手动同步本机 `~/.workbuddy/MEMORY.md`。
+- **zip 中文名在 macOS 会乱码（2026-09-12 新设备实测）**：`package.py` 打的 zip **本身合规**（15 个中文名条目全带 UTF-8 标志位 `flag_bits=0x0800`）；**是 macOS 自带老版 Info-ZIP `unzip` 忽略标志位**且不支持 `-O`。**对策**：跨系统优先用 `tar.gz`；或 `python3 -c "import zipfile; zipfile.ZipFile('x.zip').extractall('.')"`。**别再"修"打包代码**——包没问题。
+- **verify.py 有两套满分（易误判"少跑了一项"）**：`[git 工作区干净]` **只在 git 仓库内计数** → git 库内 **35/35**；非 git 仓库（如 `~/.workbuddy/templates/doc-driven-master/`）→ **34/34**，该项打 `[INFO] 跳过`。**两个数都算全绿**。verify.py 已会在汇总下方自动打印说明。
+- **install.py 幂等无副作用（2026-09-12 修）**：技能/钩子内容一致时**跳过**（不覆盖、不产生 `.bak-<日期>`）。此前会无条件备份 → 重复跑堆垃圾备份，导致新设备那次**没敢跑第二次幂等验证**。
 
 ## 新设备迁移（2026-09-12 建）
 
