@@ -27,6 +27,7 @@ install.py —— 文档驱动开发架构 · 新设备一键部署
 
 import argparse
 import datetime
+import filecmp
 import json
 import os
 import shutil
@@ -71,6 +72,25 @@ def backup(path):
     else:
         shutil.copy2(path, dst)
     return dst
+
+
+def same_tree(a, b):
+    """目录是否逐文件相同（幂等用：相同就不覆盖、也就不产生 .bak 垃圾）。"""
+    if not (os.path.isdir(a) and os.path.isdir(b)):
+        return False
+    for root in (a, b):
+        other = b if root is a else a
+        for r, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if f.endswith(".pyc"):
+                    continue
+                pa = os.path.join(r, f)
+                rel = os.path.relpath(pa, root)
+                pb = os.path.join(other, rel)
+                if not os.path.isfile(pb) or not filecmp.cmp(pa, pb, shallow=False):
+                    return False
+    return True
 
 
 def main():
@@ -157,6 +177,9 @@ def main():
             if dry:
                 rec(True, "技能 %s" % name, "将安装到 %s" % dst)
                 continue
+            if same_tree(src, dst):
+                rec(True, "技能 %s" % name, "内容一致，跳过（不覆盖、不产生备份）")
+                continue
             bk = None
             if os.path.isdir(dst):
                 bk = backup(dst)
@@ -176,8 +199,11 @@ def main():
             rec(True, "钩子脚本", "将安装到 %s" % guard_dst)
         else:
             os.makedirs(hooks_dir, exist_ok=True)
-            shutil.copy2(guard_src, guard_dst)
-            rec(os.path.isfile(guard_dst), "钩子脚本", guard_dst)
+            if os.path.isfile(guard_dst) and filecmp.cmp(guard_src, guard_dst, shallow=False):
+                rec(True, "钩子脚本", "内容一致，跳过（幂等）")
+            else:
+                shutil.copy2(guard_src, guard_dst)
+                rec(os.path.isfile(guard_dst), "钩子脚本", guard_dst)
     except Exception as e:
         rec(False, "钩子脚本", str(e))
 

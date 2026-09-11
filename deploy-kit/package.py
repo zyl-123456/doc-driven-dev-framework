@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-package.py —— 把 deploy-kit 打成可分发的 zip，放进 dist/
+package.py —— 把 deploy-kit 打成可分发的包，放进 dist/
+
+一次产出两种格式：
+    *.zip      通用；但中文文件名靠 ZIP 的"UTF-8 标志位"约定，
+               老版 Info-ZIP unzip / 某些 macOS 工具会忽略它 → 解出乱码名。
+    *.tar.gz   中文文件名更稳（tar 按 UTF-8 直接存，无标志位历史包袱），
+               macOS / Linux / Windows 10+ 自带 tar 都能正确解开。
+               Windows↔macOS 之间传含中文名的包，优先用它。
 
 为什么要脚本化：
-    手工打 zip 有两个老毛病：容易漏文件、容易把 __pycache__ / .bak 打进去。
+    手工打包有两个老毛病：容易漏文件、容易把 __pycache__ / .bak 打进去。
     这和 sync-master.py 的动机一样——「重复且易错」的动作，固化成一条命令。
 
 正确顺序（漏了第一步，包里就是旧版）：
-    1. python sync-master.py         # 母版 / 技能 / 钩子 三条副本链路先同步
+    1. python sync-master.py         # 母版 / 技能 / 钩子 / 模板副本先同步
     2. python package.py             # 再打包
 
 用法：
     python package.py                 # 版本号自动从 deploy-kit README 探测
     python package.py --version v4    # 手动指定版本号
-    python package.py --out <路径>    # 指定输出文件（默认 dist/doc-driven-kit-<ver>-<日期>.zip）
+    python package.py --out <路径>    # 指定输出（默认 dist/doc-driven-kit-<ver>-<日期>.zip，另出同名 .tar.gz）
 """
 
 import argparse
@@ -22,6 +29,7 @@ import datetime
 import os
 import re
 import sys
+import tarfile
 import zipfile
 
 try:
@@ -88,24 +96,40 @@ def main():
         for ap_, rel in items:
             z.write(ap_, rel)
 
+    # 同时打一份 tar.gz —— 中文文件名的"根治"格式。
+    # 原因：ZIP 对非 ASCII 名字靠"UTF-8 标志位"(bit 11)约定，规范的包也会被
+    # 老版 Info-ZIP unzip / 某些 macOS 工具忽略标志位而解出乱码名；
+    # tar 没有这个历史包袱，macOS/Linux/Windows(10+) 自带的 tar 都按 UTF-8 处理。
+    tgz = out[:-4] + ".tar.gz"
+    with tarfile.open(tgz, "w:gz", format=tarfile.PAX_FORMAT) as t:
+        for ap_, rel in items:
+            t.add(ap_, arcname=rel)
+
     size = os.path.getsize(out)
+    tsize = os.path.getsize(tgz)
     print("=" * 60)
     print("打包完成")
     print("=" * 60)
     print("版本  : %s" % ver)
     print("文件数: %d" % len(items))
-    print("大小  : %.1f KB" % (size / 1024.0))
-    print("输出  : %s" % out)
+    print("ZIP   : %s（%.1f KB）" % (out, size / 1024.0))
+    print("TAR.GZ: %s（%.1f KB）" % (tgz, tsize / 1024.0))
+    print("        ↑ 跨平台（尤其 Windows↔macOS）传中文文件名的包，优先用这个")
     # 兼容性核对：确认钩子副本已在包内
     if not any(rel.endswith("payload/hooks/doc-driven-guard.py") for _, rel in items):
         print("\n⚠ 包里没有 payload/hooks/doc-driven-guard.py —— 先跑 sync-master.py")
         return 1
     others = [f for f in os.listdir(DIST)
-              if f.endswith(".zip") and os.path.join(DIST, f) != out] \
+              if (f.endswith(".zip") or f.endswith(".tar.gz"))
+              and os.path.join(DIST, f) not in (out, tgz)] \
         if os.path.isdir(DIST) else []
     if others:
         print("\n注意：dist/ 里还有其它旧包，可按需清理：%s" % ", ".join(sorted(others)))
-    print("\n下一步：把该 zip 拷到新设备，解压后跑 python install.py")
+    print("\n下一步：把包拷到新设备解压，然后跑 python install.py")
+    print("       macOS 上若 zip 解出乱码文件名，请用：")
+    print("       python3 -c \"import zipfile; zipfile.ZipFile('%s').extractall('.')\""
+          % os.path.basename(out))
+    print("       或直接改用 tar.gz：tar -xzf %s" % os.path.basename(tgz))
     return 0
 
 

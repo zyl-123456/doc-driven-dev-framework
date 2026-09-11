@@ -303,6 +303,7 @@ def git(args):
         return None, ""
 
 
+git_skipped = False
 rc, out = git(["rev-parse", "--is-inside-work-tree"])
 if rc == 0 and out.strip() == "true":
     rc2, head = git(["rev-parse", "--short", "HEAD"])
@@ -314,9 +315,12 @@ if rc == 0 and out.strip() == "true":
         check("git 工作区干净（任务完成判定）", not dirty,
               ("未提交变更 %d 项，视为任务未完成" % len(dirty)) if dirty else "")
     else:
-        print("[INFO] 尚无提交，工作区干净性检查跳过（首提交后生效）")
+        git_skipped = True
+        print("[INFO] 尚无提交 → 「git 工作区干净」跳过（首提交后生效，满分恢复为 35）")
 else:
-    print("[INFO] 当前目录非 git 仓库，版本库卫生检查跳过")
+    git_skipped = True
+    print("[INFO] 非 git 仓库 → 「git 工作区干净」跳过"
+          "（放进 git 仓库内该项才计数，满分 34 → 35）")
 
 # ============================================================
 # 7. 领域扩展检查区（项目专属，按需增删）
@@ -339,5 +343,8 @@ print("=" * 52)
 print("验收结果: %d/%d PASS%s" % (
     passed, total,
     (", FAIL %d 项: %s" % (failed, "; ".join(fail_items))) if failed else ""))
+if git_skipped:
+    print("说明: 「git 工作区干净」1 项已跳过（当前不在 git 仓库内，或尚无提交），")
+    print("      所以满分是 %d 而不是 35 —— 放进 git 仓库并提交后即为 35/35。" % total)
 print("=" * 52)
 sys.exit(0 if failed == 0 else 1)

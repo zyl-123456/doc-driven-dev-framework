@@ -4,9 +4,18 @@
 > 会建框架、会按纪律干活、**而且不会忽略它**。
 >
 > 包版本：v4　|　打包日期：2026-09-12　|　来源母版：`D:\000-me-work\top_design`
-> 部署方式：**把整个 `deploy-kit/` 文件夹拷到新设备，跑一次安装**。幂等、可重复跑、不破坏已有配置。
+> 部署方式：**把包拷到新设备解压，在 `deploy-kit/` 里跑两步**（装能力层 + 建母版工作区）。幂等、可重复跑、不破坏已有配置。
 >
 > 📖 **人看的版本**：`QUICKSTART-新设备手把手教学.md`（更口语、带照抄话术；本文件偏"执行者视角"）。
+
+**跨平台速查**（脚本本身跨平台；只有"路径写法"和"Python 命令名"随系统不同）：
+
+| | Windows | macOS / Linux |
+|---|---|---|
+| 解压 | 右键「全部解压缩」 | `tar -xzf *.tar.gz`（**推荐**）<br>或 `python3 -c "import zipfile; zipfile.ZipFile('*.zip').extractall('.')"` |
+| 顶层设计目录 | `D:\top_design` | `~/top_design` |
+| Python 命令 | `E:\anaconda\python.exe`（或你装的） | `python3` |
+| 钩子解释器 | 由 `install.py` 自动探测本机绝对路径写入 | 同左 |
 
 ---
 
@@ -30,8 +39,15 @@
 
 ### 第 1 步：把包带到新设备
 
-把这个 **zip** 拷过去（U 盘 / 微信传文件 / 网盘），解压到你的顶层设计目录里，比如 `D:\top_design`（Mac 放 `~/top_design`）。
+`dist/` 里有**两种格式**，内容一样，挑一个传（U 盘 / 微信传文件 / 网盘）：
+
+- `doc-driven-kit-v4-20260912.tar.gz` ← **推荐**（跨 Windows/macOS 传中文文件名更稳）
+- `doc-driven-kit-v4-20260912.zip` ← 通用
+
+解压到你的顶层设计目录里（Windows 如 `D:\top_design`，macOS 如 `~/top_design`）。
 解压完会在里面得到一个 `deploy-kit` 文件夹。
+
+> macOS 上用 zip 解出 `?????` 乱码？**是自带 `unzip` 的问题，不是包坏了** —— 改用 `tar -xzf`，或用 Python 解压（详见第七节 Q）。
 
 ### 第 2 步：装能力层（让机器"会"这套架构）
 
@@ -61,7 +77,7 @@ python init-master-workspace.py --init-git
 
 （不填 `--target` 就是 `deploy-kit` 的上一级，也就是你的 `D:\top_design`。）
 
-跑完会打印 `整理结果: 6/6 PASS`，并当场用 `verify.py` 自验收（期望 **35/35 PASS**）。
+跑完会打印 `整理结果: 6/6 PASS`，并当场用 `verify.py` 自验收（**git 库内 35/35；非 git 仓库 34/34 —— 两个数都算全绿**，详见第七节 Q）。
 之后 `D:\top_design` 就是一个跟老设备**完全同构**的母版工作区——新项目都从这里取源。
 
 > 详细说明与"平话版"请看同目录 `QUICKSTART-新设备手把手教学.md`。
@@ -137,7 +153,7 @@ python init-master-workspace.py --init-git
 | 3 | 安装钩子脚本 | 覆盖前无需备份（纯新增文件） |
 | 4 | 合并 `hooks` 进 `settings.json` | **保留原有全部配置**；改动前备份；已有同类钩子则跳过（幂等） |
 | 5 | 安装母版 + 追加治理记忆段 | 记忆是**追加**不是覆盖；段落已存在则跳过 |
-| 6 | 安装后核对 + 跑母版 `verify.py` | 逐项确认文件就位，并做一次 35/35 自验收 |
+| 6 | 安装后核对 + 跑母版 `verify.py` | 逐项确认文件就位，并做一次自验收（非 git 仓库 **34/34**，详见第七节 Q） |
 
 **幂等**：重复跑不会重复挂钩子、不会重复追加记忆段（实测第二次跑 15/15 PASS，钩子与记忆均提示"已跳过"）。
 **可回退**：任何被改动的文件都留有 `.bak-<日期>`，删掉新增目录即可完全还原。
@@ -151,7 +167,7 @@ python init-master-workspace.py --init-git
 | 2 | `payload/hooks/` → 工作区 `hooks/` | 同上（幂等） |
 | 3 | 写 `.gitignore` | 已存在则**不动你的内容** |
 | 4 | （`--init-git`）`git init -b main` + 首次提交 | 已在 git 仓库内则跳过，不嵌套建库 |
-| 5 | 跑工作区 `verify.py` 自验收 | 当场验证，期望 35/35 |
+| 5 | 跑工作区 `verify.py` 自验收 | 当场验证；建了 git 库 → 35/35 |
 
 ## 七、常见问题
 
@@ -180,6 +196,29 @@ Windows 上 WorkBuddy 自带托管 Python（`~/.workbuddy/binaries/python/`）�
 > ⚠️ **母版是唯一权威源**。别拿项目里的副本回头改母版，也别两台设备各改各的——多副本是这套框架唯一的结构性风险点。
 > （若你此前装过旧版，`~/.workbuddy/templates/doc-driven-v3/` 会残留，可手动删掉。）
 
+**Q：为什么 `verify.py` 报的是 34/34，而文档别处写 35/35？**
+因为「git 工作区干净」这一项**只在 git 仓库内才计数**。
+- `~/.workbuddy/templates/doc-driven-master/`（`install.py` 铺的副本）**不是 git 仓库** → 该项打印 `[INFO] …跳过`，满分 **34**；
+- 母版工作区（`init-master-workspace.py --init-git` 建过库）→ 满分 **35**。
+
+**两个数都算全绿**，不是少跑了一项。（旧版文档只写 35/35，是口径没交代清楚；`verify.py` 现在会在汇总行下方自动打印说明。）
+
+**Q：macOS 上用自带 `unzip` 解压，中文文件名变成 `?????` 怎么办？**
+这不是包坏了 —— 包里 15 个中文名的条目**都正确带 UTF-8 标志位**（符合 ZIP 规范）。是**解压工具**的问题：老版 Info-ZIP `unzip`（macOS 自带的那个不支持 `-O`）会忽略这个标志位。三种解法任选：
+
+```bash
+# 解法 1（推荐）：用 Python 解压，Python 按规范读标志位，绝不出错
+python3 -c "import zipfile; zipfile.ZipFile('doc-driven-kit-v4-20260912.zip').extractall('.')"
+
+# 解法 2：改用同目录的 tar.gz（tar 没有标志位这回事，按 UTF-8 直接存）
+tar -xzf doc-driven-kit-v4-20260912.tar.gz
+
+# 解法 3：装个 GNU unzip 或用 7z
+brew install unzip && unzip doc-driven-kit-v4-20260912.zip
+```
+
+**根治**：以后凡是 Windows↔macOS 之间传含中文文件名的包，**优先用 `.tar.gz`**（`package.py` 两种格式同时产出，macOS / Linux / Windows 10+ 自带的 `tar` 都能正确解开）。
+
 **Q：会不会影响新设备上其他项目的正常工作？**
 不会。钩子只认"带框架的项目"，其余目录直接输出"放行、不改行为"。而且它永远不会阻断你——脚本任何异常都只会安静放行。
 
@@ -194,6 +233,6 @@ Windows 上 WorkBuddy 自带托管 Python（`~/.workbuddy/binaries/python/`）�
 >  a. 报告两份报告的最终 PASS/FAIL 数量；
 >  b. 实测钩子脚本在"框架项目"和"非框架项目"下的两种输出；
 >  c. 复核 `~/.workbuddy/settings.json` 的 `hooks` 字段已写入且原配置未丢；
->  d. 把母版工作区的 `verify.py` 跑出 35/35 PASS；
+>  d. 把母版工作区的 `verify.py` 跑出全绿（git 库内 35/35）；
 >  e. 告诉我"重启 WorkBuddy + 发一条消息看有没有注入提醒"这条验证怎么做；
 >  f. 复述一遍"以后新项目从哪里取源、改了母版后要跑哪条命令"，让我确认你理解对了。
