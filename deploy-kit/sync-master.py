@@ -8,10 +8,13 @@ sync-master.py —— 把母版工作区与技能的最新内容同步到部署�
     新设备装到旧版，于是又出现「文档说 A、现实是 B」。
     手工 cp 容易漏文件、也容易漏比对，所以把它固化成一条命令。
 
-它管三条链路：
+它管四条链路：
     1. 母版目录 → deploy-kit/payload/master/          （母版发布副本）
     2. 本机技能 → deploy-kit/payload/skills/          （技能发布副本）
-    3. 一致性告警：母版七件套 ↔ 技能 templates/七件套   （防技能模板落后于母版）
+    3. 母版 hooks/ → deploy-kit/payload/hooks/        （触发层钩子发布副本）
+    4. 一致性告警（两条）：
+       a. 母版七件套 ↔ 技能 templates/七件套           （防技能模板落后于母版）
+       b. 母版 hooks/ ↔ 本机实装钩子                   （防母版改了钩子却没重装）
 
 用法：
     python sync-master.py                     # 比对并同步
@@ -32,6 +35,7 @@ except Exception:
     pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+PAYLOAD = os.path.join(HERE, "payload")
 PAYLOAD_MASTER = os.path.join(HERE, "payload", "master")
 PAYLOAD_SKILLS = os.path.join(HERE, "payload", "skills")
 SKILL_NAMES = ("doc-driven-dev", "doc-driven-framework-porting")
@@ -137,6 +141,26 @@ def check_templates(master_dir, skills_root):
     return len(lag)
 
 
+def check_hook(master_dir, home_dir):
+    """告警：本机实装钩子是否落后于母版 hooks/。
+    实装钩子才是真正每轮跑的代码 —— 母版改了钩子却没重装，等于白改。"""
+    mh = os.path.join(master_dir, "hooks", "doc-driven-guard.py")
+    lh = os.path.join(home_dir, ".workbuddy", "hooks", "doc-driven-guard.py")
+    print("\n【母版 hooks/ ↔ 本机实装钩子 一致性】")
+    if not os.path.isfile(lh):
+        print("  ⚠ 本机未装钩子（%s）—— 请跑 install.py 安装" % lh)
+        return 1
+    if not os.path.isfile(mh):
+        print("  跳过：母版无 hooks/doc-driven-guard.py")
+        return 0
+    if filecmp.cmp(mh, lh, shallow=False):
+        print("  ✓ 本机实装钩子与母版一致")
+        return 0
+    print("  ⚠ 本机实装钩子落后于母版：%s" % lh)
+    print("    请重跑 install.py（或手动覆盖）让母版钩子生效")
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--master", default=os.path.dirname(HERE),
@@ -191,8 +215,13 @@ def main():
             continue
         report("技能 %s" % name, s, d, dry)
 
-    # 链路 3：一致性告警
+    # 链路 3：母版 hooks/ → payload/hooks（触发层钩子，绝不能锁在旧版）
+    report("母版 hooks → payload/hooks",
+           os.path.join(master, "hooks"), os.path.join(PAYLOAD, "hooks"), dry)
+
+    # 链路 4：一致性告警（模板 + 实装钩子）
     tpl_lag = check_templates(master, skills_src)
+    hook_lag = check_hook(master, os.path.expanduser("~"))
 
     print("\n" + "=" * 62)
     print("下一步：重新打包 deploy-kit（否则 dist/ 里的 zip 仍是旧版）。")

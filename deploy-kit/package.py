@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+package.py —— 把 deploy-kit 打成可分发的 zip，放进 dist/
+
+为什么要脚本化：
+    手工打 zip 有两个老毛病：容易漏文件、容易把 __pycache__ / .bak 打进去。
+    这和 sync-master.py 的动机一样——「重复且易错」的动作，固化成一条命令。
+
+正确顺序（漏了第一步，包里就是旧版）：
+    1. python sync-master.py         # 母版 / 技能 / 钩子 三条副本链路先同步
+    2. python package.py             # 再打包
+
+用法：
+    python package.py                 # 版本号自动从 deploy-kit README 探测
+    python package.py --version v4    # 手动指定版本号
+    python package.py --out <路径>    # 指定输出文件（默认 dist/doc-driven-kit-<ver>-<日期>.zip）
+"""
+
+import argparse
+import datetime
+import os
+import re
+import sys
+import zipfile
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DIST = os.path.join(os.path.dirname(HERE), "dist")
+KIT_NAME = "deploy-kit"          # zip 内顶层目录名（解压即得 deploy-kit/…）
+README = os.path.join(HERE, "README-新设备部署.md")
+EXCLUDE_DIRS = {"__pycache__", ".git", ".workbuddy", "dist"}
+
+
+def detect_version():
+    """从部署说明头部探测「包版本：vX」。"""
+    try:
+        with open(README, "r", encoding="utf-8") as f:
+            m = re.search(r"包版本[：:]\s*(v[\d.]+)", f.read())
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "v0"
+
+
+def skip(name):
+    return (name.endswith((".pyc", ".bak", ".tmp"))
+            or ".bak-" in name or name.startswith("."))
+
+
+def collect():
+    """返回 [(绝对路径, zip内相对路径)]，顶层统一加 deploy-kit/ 前缀。"""
+    items = []
+    for r, dirs, files in os.walk(HERE):
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+        for fn in sorted(files):
+            if skip(fn):
+                continue
+            ap = os.path.join(r, fn)
+            rel = os.path.relpath(ap, os.path.dirname(HERE)).replace("\\", "/")
+            if rel.startswith(KIT_NAME + "/"):
+                items.append((ap, rel))
+    return items
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", default=None, help="版本号，默认从 README 探测")
+    ap.add_argument("--out", default=None, help="输出 zip 路径")
+    args = ap.parse_args()
+
+    ver = args.version or detect_version()
+    date = datetime.datetime.now().strftime("%Y%m%d")
+    out = args.out or os.path.join(DIST, "doc-driven-kit-%s-%s.zip" % (ver, date))
+
+    items = collect()
+    if not items:
+        print("FAIL 没收集到任何文件，确认 deploy-kit/ 目录是否正确")
+        return 1
+
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for ap_, rel in items:
+            z.write(ap_, rel)
+
+    size = os.path.getsize(out)
+    print("=" * 60)
+    print("打包完成")
+    print("=" * 60)
+    print("版本  : %s" % ver)
+    print("文件数: %d" % len(items))
+    print("大小  : %.1f KB" % (size / 1024.0))
+    print("输出  : %s" % out)
+    # 兼容性核对：确认钩子副本已在包内
+    if not any(rel.endswith("payload/hooks/doc-driven-guard.py") for _, rel in items):
+        print("\n⚠ 包里没有 payload/hooks/doc-driven-guard.py —— 先跑 sync-master.py")
+        return 1
+    others = [f for f in os.listdir(DIST)
+              if f.endswith(".zip") and os.path.join(DIST, f) != out] \
+        if os.path.isdir(DIST) else []
+    if others:
+        print("\n注意：dist/ 里还有其它旧包，可按需清理：%s" % ", ".join(sorted(others)))
+    print("\n下一步：把该 zip 拷到新设备，解压后跑 python install.py")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
