@@ -86,12 +86,16 @@ agent_created: true
 |---|---|---|
 | 行为层技能 `doc-driven-dev` | `~/.workbuddy/skills/` | 同路径 |
 | 移植技能 `doc-driven-framework-porting`（含 templates） | `~/.workbuddy/skills/` | 同路径 |
-| 触发层钩子 `doc-driven-guard.py` | `~/.workbuddy/hooks/` | 同路径 |
+| 触发层钩子 `doc-driven-guard.py` | 权威源：母版 `hooks/`；发布副本 `deploy-kit/payload/hooks/`；实装 `~/.workbuddy/hooks/` | 同路径 `~/.workbuddy/hooks/` |
 | settings.json 的 `hooks` 字段 | `~/.workbuddy/settings.json` | 同文件（合并，不覆盖） |
 | 用户记忆的开发治理段 | `~/.workbuddy/MEMORY.md` | 同文件（追加） |
 
 **一键通道**：母版工作区 `D:\000-me-work\top_design\deploy-kit\`——
 `install.py` 跨平台自动完成（探测 `~/.workbuddy`、备份、幂等合并、写钩子、自检报告）。
 把 `deploy-kit/` 整体拷到新设备，然后让新设备的 WorkBuddy 读 `README-新设备部署.md` 照做即可。
+
+**发布三步**（母版改了以后按序执行，别手工 cp）：`sync-master.py`（同步母版/技能/钩子三条副本链路）→ `package.py`（重打 `dist/` 的 zip）→ 拷到新设备跑 `install.py`。
+
+**钩子 v2 设计**：它**不内嵌纪律文字**，每轮实时读项目 `00` 文档生成提醒——母版改了钩子立即跟着变，无"副本漂移"；每轮注入的是项目「当前快照」三行（会变），不是固定复读。
 
 **钩子生效的前提**：hook 命令里写的是解释器绝对路径，必须在**新设备本机**探测（install.py 用 `sys.executable` 并当场实测一次，测通才写入）。跨设备直接复制 settings.json 会因路径不存在而失效。

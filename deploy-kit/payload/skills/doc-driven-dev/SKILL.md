@@ -10,9 +10,10 @@ agent_created: true
 
 **只要涉及软件开发项目，一律以本架构推进。** 三层分工：**事实层**（项目内五文档，唯一事实源）+ **行为层**（本技能，纪律自动加载）+ **触发层**（**已升级为平台钩子**，见下）。
 
-**触发层现状（2026-09-12 挂载）**：`~/.workbuddy/settings.json` 的 `hooks` 字段已挂 `doc-driven-guard.py`（`~/.workbuddy/hooks/`）——
-- `SessionStart` 注入完整纪律五条；`UserPromptSubmit` 每轮注入一行提醒；
-- 判定方式：从 `cwd` 向上找 `开发驱动文档/00-驱动开发规则.md`（或项目根同名文件），命中才注入，非框架项目静默放行；
+**触发层现状（2026-09-12 挂载 · 钩子 v2）**：`~/.workbuddy/settings.json` 的 `hooks` 字段已挂 `doc-driven-guard.py`（`~/.workbuddy/hooks/`；权威源 = 母版 `hooks/`）——
+- **不内嵌任何纪律文字**：`SessionStart` 与 `UserPromptSubmit` 都**实时读项目里的 `00` 文档**，按章节关键词提取「落档纪律 / 收尾四步 / 证据裁决」再注入；母版一改立即生效，无副本漂移；
+- `SessionStart` 注入上述纪律要点 + 项目当前快照；`UserPromptSubmit` 每轮注入**会变的「当前快照」三行**（正在做 / 卡在哪 / 下一步），而非固定复读（治"提醒疲劳"）；快照未填时明确提示去补；
+- 判定方式：从 `cwd` 向上找 `开发驱动文档/00-驱动开发规则.md`（或项目根同名文件），命中才注入，非框架项目静默放行；任何异常都输出 `{"continue": true}`，绝不阻断；
 - 早先"不建定时任务、由即时对齐审计替代"的裁决已被此钩子取代（钩子是推、审计是查，两者并存）。
 
 新项目未建框架 → 先执行姐妹技能 `doc-driven-framework-porting`（本地模板 **v4** 直接生成，三分钟建好）；已有框架 → 按下方纪律运行。**换新设备** → 见 `deploy-kit/README-新设备部署.md`（母版 `D:\000-me-work\top_design\deploy-kit\`）。**模板母版在 `D:\000-me-work\top_design`（**v4**，2026-09-12 定稿），技能 `templates/` 只是发布副本。**
