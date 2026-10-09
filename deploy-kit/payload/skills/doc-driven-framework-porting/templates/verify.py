@@ -1,350 +1,203 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-verify.py · {{PROJECT}} —— 总验收命令（文档驱动开发框架 v4 通用版）
-
-设计依据：开发驱动文档/00-驱动开发规则.md 第八节「总验收命令」六项要求
-  1. 人类可独立执行：命令输出即结论，不依赖 AI 转述
-  2. 失败必须显式：任一关键项失败返回非零退出码
-  3. 硬事实可验证：文档里的可量化声明必须能被本命令对账
-  4. 覆盖安全边界：00 文档第十一节 SEC 条款纳入检查
-  5. 自检运行环境：前置校验解释器版本
-  6. 结论绑定输入版本：输出 git commit 哈希（若有）
-
-v4 新增「交接就绪对账」（第 5 节）：
-      框架里最容易退化的不是硬条款，而是"每轮都要更新"的软信息。
-      凡没被脚本检查的规则，长期看都会退化 —— 所以把最容易被忘的三件事
-      （当前快照、环境节、技术债节）变成可对账项，并对文档规模自动限流。
-
-用法：
-  python verify.py                              # 通用检查
-  E:\\anaconda\\python.exe verify.py             # Windows 工作站推荐口径
-
-版本：v4.0.0（模板母版 2026-09-12）
-说明：本脚本与项目无关，复制到新项目后**只需改一处**（把 MODE 改为 "project"）即可运行；
-      项目专属检查项写在文件末尾「领域扩展检查区」，按提示增删即可。
-"""
-
-import os
+"""Document structure checker, v5.0.0. No product or security certification."""
+import argparse
+import json
 import re
 import subprocess
 import sys
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
-# ============================================================
-# 可调开关
-# ============================================================
-
-# 【复制到新项目后必改这一处】
-#   "template" —— 模板母版工作区：占位符与未填写的交接信息只报 INFO，不判失败（模板本该是空的）
-#   "project"  —— 真实项目：占位符未清零、交接信息未填 一律 FAIL
-MODE = "template"
-
-# 兼容旧开关（v3 时代的 STRICT_PLACEHOLDER）：
-# 若你手上的副本改过它，设为 True 也等效于 MODE = "project" 的占位符检查。
-STRICT_PLACEHOLDER = False
-
-# 文档规模阈值（对应 00 文档第九节「触发式归档」硬阈值；可按项目规模调整，但不得取消）
-MAX_04_LINES = 400        # 04 全文行数上限
-MAX_MILESTONES = 20       # 04 里程碑条数上限
-MAX_ACCEPT_ROWS = 30      # 04 验收结论表行数上限
-
-# 文档目录探测顺序（按需增删；脚本会取第一个真正含 00 文档的目录）
-DOC_DIR_CANDIDATES = ["开发驱动文档", ".", "docs/开发驱动文档", "文档/开发驱动文档"]
-
-# 强制要求存在的最小里程碑 / 设计编号（留空则不检查具体编号）
-REQUIRED_MILESTONE = "M-000"
-REQUIRED_DESIGN = "D-000"
-
-GOV_FILENAMES = [
-    "00-驱动开发规则.md",
-    "01-人类需求描述.md",
-    "02-需求技术拆解.md",
-    "03-技术实现方案.md",
-    "04-实现过程记录.md",
-]
-
-# 00 文档必须具备的核心章节（按关键词检查，抗重编号）
-RULES_SECTIONS = [
-    "这套框架解决什么问题",
-    "核心机制",
-    "五文档体系",
-    "编号引用体系",
-    "闭环工作流",
-    "落档纪律",
-    "证据裁决规则",
-    "对账验收",
-    "文档生命周期",
-    "权责",
-    "安全底线与交付纪律",
-    "领域扩展",
-    "并行开发约定",
-]
-
-# 交接就绪三行（START_HERE「当前快照」）
-HANDOVER_LABELS = ["正在做", "卡在哪", "下一步"]
-
-strict_mode = (MODE == "project") or STRICT_PLACEHOLDER
-
-# ============================================================
-# 环境自检（要求 5，前置）
-# ============================================================
-
-if sys.version_info < (3, 8):
-    print("[ENV] FAIL: 需要 Python >= 3.8，当前 %d.%d.%d" % sys.version_info[:3])
-    sys.exit(1)
-print("[ENV] PASS: Python %d.%d.%d" % sys.version_info[:3])
-
-BASE = os.path.dirname(os.path.abspath(__file__))
-
-passed = 0
-failed = 0
-fail_items = []
+VERSION = "5.0.0"
+MODE = "auto"  # Legacy template/project overrides remain supported.
+DOC_NAMES = ["00-驱动开发规则.md", "01-人类需求描述.md", "02-需求技术拆解.md",
+             "03-技术实现方案.md", "04-实现过程记录.md"]
+ID_PATTERN = r"(?<![\w-])(?:REQ|TECH|D|M|ASM|Q|C|A|SEC|TD)-(?:[A-Za-z][A-Za-z0-9]*-)*\d+(?![\w-])"
+IDENTIFIER = re.compile(ID_PATTERN)
+PLACEHOLDER = re.compile(r"\{\{[^{}]*\}\}")
 
 
-def check(name, ok, detail=""):
-    global passed, failed
-    tag = "PASS" if ok else "FAIL"
-    print("[%s] %s%s" % (tag, name, (" —— " + detail) if detail else ""))
-    if ok:
-        passed += 1
-    else:
-        failed += 1
-        fail_items.append(name)
+def visible(text):
+    """Ignore examples in fenced code, HTML comments and template placeholders."""
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    lines, fence = [], None
+    for line in text.splitlines():
+        match = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if match:
+            marker = match.group(1)
+            if fence is None:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence):
+                fence = None
+            continue
+        if fence is None:
+            lines.append(line)
+    return PLACEHOLDER.sub("", "\n".join(lines))
 
 
-def read(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+def definitions(text):
+    """Definitions use heading/bullet starts or an explicitly labelled ID table."""
+    found, id_table = [], False
+    for line in text.splitlines():
+        match = re.match(r"^\s*(?:#{1,6}\s+|[-*]\s+)(?:\*\*)?(" + ID_PATTERN + r")", line)
+        if match:
+            found.append(match.group(1))
+        if line.lstrip().startswith("|"):
+            first = line.strip().strip("|").split("|")[0].strip().strip("*`")
+            if first in ("编号", "ID", "标识"):
+                id_table = True
+            elif re.fullmatch(r"[-: ]+", first):
+                pass
+            elif id_table and IDENTIFIER.fullmatch(first):
+                found.append(first)
+            elif not IDENTIFIER.fullmatch(first):
+                id_table = False
+        elif line.strip():
+            id_table = False
+    return found
 
 
-# ---------- 定位文档目录 ----------
-
-DOC = None
-for cand in DOC_DIR_CANDIDATES:
-    p = os.path.normpath(os.path.join(BASE, cand))
-    if os.path.isfile(os.path.join(p, GOV_FILENAMES[0])):
-        DOC = p
-        break
-
-if DOC is None:
-    print("[ENV] FAIL: 找不到文档目录（以下位置均无 %s）：%s"
-          % (GOV_FILENAMES[0], ", ".join(DOC_DIR_CANDIDATES)))
-    sys.exit(1)
-
-rel = os.path.relpath(DOC, BASE).replace("\\", "/")
-print("[ENV] PASS: 文档目录 = %s" % ("<项目根>" if rel == "." else rel))
-print("[ENV] MODE = %s（%s）" % (MODE, "模板母版态" if MODE == "template" else "项目态"))
-print()
-
-# ============================================================
-# 1. 文档结构对账
-# ============================================================
-
-for gf in GOV_FILENAMES:
-    p = os.path.join(DOC, gf)
-    check("文档存在且非空: %s" % gf, os.path.isfile(p) and os.path.getsize(p) > 0)
-
-# 根入口四层结构
-sh_path = os.path.join(BASE, "START_HERE.md")
-if not os.path.isfile(sh_path):
-    check("根入口 START_HERE.md 存在", False, "必须在项目根目录")
-    sh = ""
-else:
-    sh = read(sh_path)
-    check("根入口 START_HERE.md 存在", True)
-check("根入口四层阅读路径完整",
-      all(k in sh for k in ["第一层", "第二层", "第三层", "第四层"]),
-      "缺层会导致新会话无法按需下钻")
-
-# 00 规则文档核心章节齐全
-rules = read(os.path.join(DOC, GOV_FILENAMES[0]))
-for sec in RULES_SECTIONS:
-    check("00 规则章节存在: %s" % sec, sec in rules)
-
-# ============================================================
-# 2. 硬条款对账（安全底线 + 交付纪律 + 协作授权）
-# ============================================================
-
-check("安全底线条款 SEC-001~004 齐全",
-      all(("SEC-%03d" % i) in rules for i in range(1, 5)),
-      "条款缺失 = 00 文档第十一节被破坏")
-
-req = read(os.path.join(DOC, GOV_FILENAMES[1]))
-check("01 交付纪律 C-002 已登记", "C-002" in req)
-check("01 协作授权声明存在", "协作模式授权" in req and "AI 全权负责" in req,
-      "缺授权声明会导致后续技术决策反复请示")
-
-# ============================================================
-# 3. 跨文档编号一致性（悬空引用检测）
-# ============================================================
-
-tech = read(os.path.join(DOC, GOV_FILENAMES[2]))
-plan = read(os.path.join(DOC, GOV_FILENAMES[3]))
-log = read(os.path.join(DOC, GOV_FILENAMES[4]))
+def section(text, title):
+    lines, body, level = text.splitlines(), [], None
+    for line in lines:
+        heading = re.match(r"^(#{1,6})\s+(.+)", line)
+        if level is None:
+            if heading and heading.group(2).strip() == title:
+                level = len(heading.group(1))
+        elif heading and len(heading.group(1)) <= level:
+            break
+        else:
+            body.append(line)
+    return "\n".join(body)
 
 
-def ids(text, prefix):
-    # 负向断言：避免把 REQ-001 里的 "Q-001"、ASM-000 里的 "M-000" 误判成独立编号
-    return set(re.findall(r"(?<![A-Za-z])" + prefix + r"-\d{3}", text))
+def acceptance_rows(text):
+    body = section(text, "验证记录") or section(text, "已完成的验收结论（结论绑定输入版本）")
+    return len(re.findall(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|", body, re.M))
 
 
-q_in_01 = ids(req, "Q")
-q_in_02 = ids(tech, "Q")
-dangling_q = q_in_01 - q_in_02
-check("01 的 Q 编号在 02 均有登记", not dangling_q,
-      ("悬空: %s" % ",".join(sorted(dangling_q))) if dangling_q else "")
-
-asm_in_02 = ids(tech, "ASM")
-asm_in_04 = ids(log, "ASM")
-dangling_asm = asm_in_02 - asm_in_04
-check("02 的 ASM 编号在 04 假设登记簿均有登记", not dangling_asm,
-      ("悬空: %s" % ",".join(sorted(dangling_asm))) if dangling_asm else "")
-
-d_in_03 = ids(plan, "D")
-if REQUIRED_DESIGN:
-    check("03 含关键设计 %s" % REQUIRED_DESIGN, REQUIRED_DESIGN in d_in_03)
-else:
-    check("03 至少含一条关键设计 D-xxx", bool(d_in_03), "编号即索引，缺编号等于设计无法被引用")
-
-m_in_04 = ids(log, "M")
-if REQUIRED_MILESTONE:
-    check("04 含里程碑 %s" % REQUIRED_MILESTONE, REQUIRED_MILESTONE in m_in_04)
-else:
-    check("04 至少含一条里程碑 M-xxx", bool(m_in_04))
-check("04 坑位速查表存在", "坑位速查表" in log, "跨会话排错的入口，缺了会重复踩坑")
-
-check("REQ 采用 EARS 句式（01 含触发/响应结构）",
-      ("触发条件" in req and "系统响应" in req) or "当" in req,
-      "模糊表述无法验收")
-
-# ============================================================
-# 4. 占位符残留（模板复制到新项目后应清零）
-# ============================================================
-
-holders = set()
-for gf in GOV_FILENAMES:
-    holders |= set(re.findall(r"\{\{[^}]{1,40}\}\}", read(os.path.join(DOC, gf))))
-if os.path.isfile(sh_path):
-    holders |= set(re.findall(r"\{\{[^}]{1,40}\}\}", sh))
-
-if holders:
-    msg = "剩余占位符 %d 种: %s" % (
-        len(holders), ", ".join(sorted(holders)[:6]) + (" …" if len(holders) > 6 else ""))
-    if strict_mode:
-        check("占位符已全部清零", False, msg)
-    else:
-        print("[INFO] 占位符检查：%s（模板母版属正常；项目副本请把 MODE 改为 \"project\"）" % msg)
-else:
-    check("占位符已全部清零", True)
-
-# ============================================================
-# 5. 交接就绪对账（v4 新增：长期项目 / 高频交接专用）
-# ============================================================
-# 设计意图：框架里最容易退化的不是硬条款，而是"每轮都要更新"的软信息。
-# 凡没被脚本检查的规则，长期看都会退化 —— 所以把最容易被忘的几件事变成可对账项。
-
-# 5.1 当前快照（交接第一站）
-check("START_HERE 含「当前快照」小节", "当前快照" in sh,
-      "交接者第一站，缺了只能自己翻 04 拼状态")
-
-missing_labels = [k for k in HANDOVER_LABELS if k not in sh]
-check("当前快照三行齐全（正在做 / 卡在哪 / 下一步）", not missing_labels,
-      ("缺: %s" % "、".join(missing_labels)) if missing_labels else "")
-
-unfilled = []
-for k in HANDOVER_LABELS:
-    m = re.search(r"\*\*" + k + r"\*\*[：:]\s*(.*)", sh)
-    val = m.group(1).strip() if m else ""
-    if (not val) or "{{" in val:
-        unfilled.append(k)
-detail = ("未填写: %s" % "、".join(unfilled)) if unfilled else "三行均已填实"
-if strict_mode:
-    check("当前快照三行已填实（非占位符）", not unfilled, detail)
-else:
-    print("[INFO] 当前快照填写情况：%s（模板母版属正常；项目副本请把 MODE 改为 \"project\"）" % detail)
-
-# 5.2 环境与运行节（接手第一站）
-check("03 含「环境与运行」节", "环境与运行" in plan,
-      "接手第一站：项目跑不起来时唯一的落脚点")
-
-# 5.3 技术债登记节（给悬置项一个位置）
-check("04 含「技术债」登记节", "技术债" in log,
-      "给「已知但暂不处理」的问题一个位置，否则会散落在代码注释里")
-
-# 5.4 文档规模阈值（00 第九节触发式归档，防膨胀）
-log_lines = len(log.splitlines())
-# 先剥离 HTML 注释：注释里的格式示例（如「### M-001 {{里程碑名称}}」）不该被计入实际条数
-log_clean = re.sub(r"<!--.*?-->", "", log, flags=re.S)
-milestones = len(re.findall(r"^###\s+M-\d{3}", log_clean, re.M))
-accept_rows = max(0, len(re.findall(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|", log_clean, re.M)))
-
-over = []
-if log_lines > MAX_04_LINES:
-    over.append("04 行数 %d > %d" % (log_lines, MAX_04_LINES))
-if milestones > MAX_MILESTONES:
-    over.append("里程碑 %d 条 > %d" % (milestones, MAX_MILESTONES))
-if accept_rows > MAX_ACCEPT_ROWS:
-    over.append("验收结论 %d 行 > %d" % (accept_rows, MAX_ACCEPT_ROWS))
-check("04 文档规模在阈值内（防膨胀）", not over,
-      "；".join(over) if over else "行数 %d/%d、里程碑 %d/%d 条、验收结论 %d/%d 行"
-      % (log_lines, MAX_04_LINES, milestones, MAX_MILESTONES, accept_rows, MAX_ACCEPT_ROWS))
-
-# ============================================================
-# 6. 版本库卫生（落档纪律第 2 条）
-# ============================================================
-
-
-def git(args):
+def git_state(root):
+    def call(args):
+        result = subprocess.run(["git", "-C", str(root)] + args, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=15)
+        return result.returncode, result.stdout.strip()
     try:
-        r = subprocess.run(["git"] + args, cwd=BASE, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=15)
-        return r.returncode, (r.stdout or "") + (r.stderr or "")
-    except Exception:
-        return None, ""
+        rc, commit = call(["rev-parse", "HEAD"])
+        if rc:
+            return {"commit": None, "dirty": None, "status": "无可用提交"}
+        rc, status = call(["status", "--porcelain"])
+        if rc:
+            return {"commit": commit, "dirty": None, "status": "状态读取失败"}
+        dirty = len(status.splitlines())
+        return {"commit": commit, "dirty": dirty,
+                "status": "工作区变更（结论包含未提交输入）" if dirty else "已提交输入"}
+    except (OSError, subprocess.SubprocessError):
+        return {"commit": None, "dirty": None, "status": "Git 不可用"}
 
 
-git_skipped = False
-rc, out = git(["rev-parse", "--is-inside-work-tree"])
-if rc == 0 and out.strip() == "true":
-    rc2, head = git(["rev-parse", "--short", "HEAD"])
-    print("[INFO] git HEAD: %s" % head.strip() if rc2 == 0 else "[INFO] git HEAD: <无提交>")
+def run(root, mode="auto", release=False, max_doc_bytes=16000):
+    root = Path(root).resolve()
+    results = []
 
-    rc3, st = git(["status", "--porcelain"])
-    dirty = [l for l in st.splitlines() if l.strip()]
-    if rc2 == 0:
-        check("git 工作区干净（任务完成判定）", not dirty,
-              ("未提交变更 %d 项，视为任务未完成" % len(dirty)) if dirty else "")
+    def record(level, name, detail=""):
+        results.append({"level": level, "name": name, "detail": detail})
+
+    if mode == "auto":
+        mode = "template" if (root / "VERSION").is_file() and (root / "deploy-kit").is_dir() else "project"
+    candidates = [root / d for d in ("开发驱动文档", ".", "docs/开发驱动文档", "文档/开发驱动文档")]
+    matches = [p for p in candidates if (p / DOC_NAMES[0]).is_file()]
+    if not matches:
+        record("FAIL", "定位五文档", "找不到 00；未继续检查")
+        return {"checker": VERSION, "mode": mode, "input": git_state(root), "results": results}
+    doc = matches[0]
+    record("FAIL" if len(matches) > 1 else "PASS", "文档位置唯一", str(doc.relative_to(root)))
+    texts = {}
+    for path in [doc / n for n in DOC_NAMES] + [root / "START_HERE.md"]:
+        try:
+            text = path.read_text(encoding="utf-8")
+            ok = bool(text.strip())
+            record("PASS" if ok else "FAIL", "文件非空: " + path.name)
+            if ok:
+                texts[path] = text
+        except (OSError, UnicodeError) as exc:
+            record("FAIL", "读取: " + path.name, str(exc))
+    if len(texts) != 6:
+        return {"checker": VERSION, "mode": mode, "input": git_state(root), "results": results}
+    for path, text in texts.items():
+        if mode == "project" and PLACEHOLDER.search(re.sub(r"<!--.*?-->", "", text, flags=re.S)):
+            record("FAIL", "待填内容: " + path.name, "填写或删除不适用项；示例代码中的占位符也需处理")
+        if max_doc_bytes > 0 and len(text.encode("utf-8")) > max_doc_bytes:
+            record("WARN", "规模提示: " + path.name, "检查重复和检索成本；不阻断交付，也不是 token 测量")
+        for match in re.finditer(r"\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[\"'][^)]*)?\)", visible(text)):
+            target = match.group(1) or match.group(2)
+            if target.startswith("#") or urlsplit(target).scheme:
+                continue
+            target_path = unquote(target.split("#", 1)[0].split("?", 1)[0])
+            if target_path and not (path.parent / target_path).exists():
+                record("FAIL", "本地链接: " + path.name, target)
+    declarations, references = {}, set()
+    for path in list(texts)[:5][1:]:  # Rules contain examples, not product ID declarations.
+        clean = visible(texts[path])
+        references.update(IDENTIFIER.findall(clean))
+        for ident in definitions(clean):
+            if ident in declarations:
+                record("FAIL", "重复定义: " + ident, path.name + " / " + declarations[ident])
+            else:
+                declarations[ident] = path.name
+    for ident in sorted(references - declarations.keys()):
+        record("FAIL", "悬空编号: " + ident, "定义一次或移除无效引用；无需补齐四段链")
+    record("INFO", "编号检查范围", "检查显式定义与引用，不证明需求语义或测试覆盖")
+    snapshot = texts[root / "START_HERE.md"]
+    for key in ("正在做", "卡在哪", "下一步"):
+        match = re.search(r"^\s*-\s*\*\*" + key + r"\*\*[：:]\s*(.*)$", snapshot, re.M)
+        ok = match is not None and bool(match.group(1).strip())
+        record("PASS" if ok else "FAIL", "快照字段存在且非空: " + key)
+    record("INFO", "快照检查范围", "只检查已填写，不证明新鲜度；需对照当前输入")
+    record("INFO", "验证记录行数", str(acceptance_rows(texts[doc / DOC_NAMES[4]])))
+    state = git_state(root)
+    if release:
+        if mode != "template":
+            record("FAIL", "发布检查适用范围", "--release 仅用于框架母版发布；产品发布用项目自己的检查")
+        record("PASS" if state["commit"] and state["dirty"] == 0 else "FAIL", "发布输入已提交且工作区干净")
+        try:
+            version = (root / "VERSION").read_text(encoding="utf-8").strip()
+            note = root / "releases" / ("v" + version + ".md")
+            change = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+            ok = version == VERSION and ("## " + version) in change and note.is_file()
+            record("PASS" if ok else "FAIL", "版本与发布说明对应", version)
+            script = root / "deploy-kit" / "sync-master.py"
+            proc = subprocess.run([sys.executable, str(script), "--check"], capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=30)
+            record("PASS" if proc.returncode == 0 else "FAIL", "发布副本一致", proc.stdout.strip())
+        except (OSError, subprocess.SubprocessError) as exc:
+            record("FAIL", "发布元数据或副本检查", str(exc))
+    return {"checker": VERSION, "mode": mode, "input": state, "results": results}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument("--mode", choices=("auto", "template", "project"), default=MODE)
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--max-doc-bytes", type=int, default=16000, help="规模提示阈值；0 关闭。字节不等于 token")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    report = run(args.root, args.mode, args.release, args.max_doc_bytes)
+    failures = sum(r["level"] == "FAIL" for r in report["results"])
+    report["ok"] = failures == 0
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
-        git_skipped = True
-        print("[INFO] 尚无提交 → 「git 工作区干净」跳过（首提交后生效，满分恢复为 35）")
-else:
-    git_skipped = True
-    print("[INFO] 非 git 仓库 → 「git 工作区干净」跳过"
-          "（放进 git 仓库内该项才计数，满分 34 → 35）")
+        print("文档结构检查 " + VERSION + " / " + report["mode"])
+        print("输入: " + json.dumps(report["input"], ensure_ascii=False))
+        for r in report["results"]:
+            print("[{level}] {name} {detail}".format(**r))
+        print("验收结果: 文档结构%s，失败 %d 项" % ("通过" if not failures else "失败", failures))
+        print("范围限制: 不证明功能正确、安全合规、快照新鲜或开发效率提升。")
+    return 1 if failures else 0
 
-# ============================================================
-# 7. 领域扩展检查区（项目专属，按需增删）
-# ============================================================
-# 复制到新项目后，在这里补项目自己的硬检查，例如：
-#
-#   check("权限白名单未超范围",
-#         not re.search(r"android.permission.(CAMERA|CONTACTS)", manifest_text))
-#   check("01 的阈值参数表已量化", "待量化" not in req)
-#
-# 保持"每条检查都能被人类一眼看懂、失败即非零退出"即可。
 
-# ============================================================
-# 汇总（要求 2：失败显式）
-# ============================================================
-
-print()
-total = passed + failed
-print("=" * 52)
-print("验收结果: %d/%d PASS%s" % (
-    passed, total,
-    (", FAIL %d 项: %s" % (failed, "; ".join(fail_items))) if failed else ""))
-if git_skipped:
-    print("说明: 「git 工作区干净」1 项已跳过（当前不在 git 仓库内，或尚无提交），")
-    print("      所以满分是 %d 而不是 35 —— 放进 git 仓库并提交后即为 35/35。" % total)
-print("=" * 52)
-sys.exit(0 if failed == 0 else 1)
+if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    sys.exit(main())

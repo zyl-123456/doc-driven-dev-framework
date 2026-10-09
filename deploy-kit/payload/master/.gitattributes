@@ -1,0 +1,12 @@
+# 本库所有文本文件当前均为 LF 换行（2026-09-12 建库时实测 41/41）。
+# 强制统一为 LF，避免不同设备 / 编辑器把 CRLF 带进来造成整文件 diff。
+* text=auto eol=lf
+
+# 二进制：不做任何换行转换
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

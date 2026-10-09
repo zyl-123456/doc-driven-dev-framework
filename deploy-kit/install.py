@@ -1,361 +1,151 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-install.py —— 文档驱动开发架构 · 新设备一键部署
-
-把本机跑通的整套「文档驱动开发架构」能力搬到一台新设备上，一次装齐四样：
-  1. 行为层技能 doc-driven-dev            → ~/.workbuddy/skills/
-  2. 移植技能 doc-driven-framework-porting（含 v4 模板） → ~/.workbuddy/skills/
-  3. 触发层钩子 doc-driven-guard.py        → ~/.workbuddy/hooks/
-  4. hooks 配置合并进 ~/.workbuddy/settings.json + 治理段追加进 ~/.workbuddy/MEMORY.md
-  5. 母版全套（含 README 总说明）          → ~/.workbuddy/templates/doc-driven-master/
-
-用法（在任意已装 WorkBuddy 的机器上，用任意 Python 3.8+ 执行）：
-    python install.py                     # 正常安装
-    python install.py --dry-run           # 只报告将做什么，不写盘
-    python install.py --home <路径>        # 指定用户目录（默认 ~），用于测试
-    python install.py --master-dir <路径>  # 指定母版安装位置
-    python install.py --with-codebuddy    # 同时写 .codebuddy/settings.json（配置路径兜底）
-
-设计原则：
-  * **幂等**：重复执行不会重复挂钩子、不会重复追加记忆段；
-  * **不破坏**：改动任何已有文件前先备份（.bak-<日期>）；
-  * **可自检**：装完当场实测钩子脚本，输出真实结果，不靠"应该没问题"；
-  * **解释器按本机探测**：钩子命令写入的是本机真实可用的 Python 绝对路径（跨设备直接拷
-    settings.json 会因路径不存在而失效，所以必须在本机重新生成）。
-"""
-
+"""Install optional WorkBuddy adapters; preserve unrelated configuration and memory."""
 import argparse
-import datetime
-import filecmp
+import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
-import tempfile
+import uuid
+from pathlib import Path
 
-try:  # Windows 控制台默认编码可能吞中文，强制 UTF-8 输出
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-PAYLOAD = os.path.join(HERE, "payload")
-GUARD_NAME = "doc-driven-guard.py"
-MEM_MARK = "开发项目治理（常设命令"
-DATE = datetime.datetime.now().strftime("%Y%m%d")
-
-results = []  # (ok, 标题, 说明)
+HERE = Path(__file__).resolve().parent
+GUARD = "doc-driven-guard.py"
 
 
-def rec(ok, title, detail=""):
-    results.append((ok, title, detail))
-    print("[%s] %s%s" % ("PASS" if ok else "FAIL", title, (" —— " + detail) if detail else ""))
+def payload_valid(payload):
+    try:
+        manifest = json.loads((payload / "manifest.json").read_text(encoding="utf-8"))
+        files = manifest["files"]
+        if not isinstance(files, dict) or not files:
+            raise ValueError("清单为空")
+        for name, expected in files.items():
+            path = (payload / name).resolve()
+            if payload.resolve() not in path.parents:
+                raise ValueError("清单路径超出 payload")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                raise ValueError("发布副本校验失败: " + name)
+        return True, manifest["version"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return False, str(exc)
 
 
-def step(n, text):
-    print("\n" + "-" * 60)
-    print("第 %s 步 · %s" % (n, text))
-    print("-" * 60)
-
-
-def backup(path):
-    """改动前备份，返回备份路径。"""
-    if not os.path.exists(path):
-        return None
-    dst = "%s.bak-%s" % (path, DATE)
-    if os.path.isdir(path):
-        if os.path.exists(dst):
-            shutil.rmtree(dst)
-        shutil.copytree(path, dst)
-    else:
-        shutil.copy2(path, dst)
-    return dst
-
-
-def same_tree(a, b):
-    """目录是否逐文件相同（幂等用：相同就不覆盖、也就不产生 .bak 垃圾）。"""
-    if not (os.path.isdir(a) and os.path.isdir(b)):
+def write_bytes(path, data, dry=False):
+    if path.is_file() and path.read_bytes() == data:
         return False
-    for root in (a, b):
-        other = b if root is a else a
-        for r, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if d != "__pycache__"]
-            for f in files:
-                if f.endswith(".pyc"):
-                    continue
-                pa = os.path.join(r, f)
-                rel = os.path.relpath(pa, root)
-                pb = os.path.join(other, rel)
-                if not os.path.isfile(pb) or not filecmp.cmp(pa, pb, shallow=False):
-                    return False
+    if dry:
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = path.with_name(path.name + ".bak-" + uuid.uuid4().hex[:12])
+        shutil.copy2(path, backup)
+    path.write_bytes(data)
     return True
 
 
+def copy_tree(source, target, dry=False):
+    return sum(write_bytes(target / p.relative_to(source), p.read_bytes(), dry)
+               for p in source.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+
+
+def update_hooks(data, command):
+    """Replace only this adapter, including stale v4 paths and per-message hooks."""
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("hooks 不是对象")
+    for event in ("SessionStart", "UserPromptSubmit"):
+        entries = hooks.get(event, [])
+        if not isinstance(entries, list):
+            raise ValueError(event + " 不是列表")
+        kept = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                kept.append(entry)
+                continue
+            remaining = [h for h in entry["hooks"] if not (
+                isinstance(h, dict) and GUARD in str(h.get("command", "")))]
+            if remaining:
+                kept.append(dict(entry, hooks=remaining))
+        if event == "SessionStart":
+            kept.append({"matcher": "startup", "hooks": [
+                {"type": "command", "command": command, "timeout": 10}]})
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    return data
+
+
 def main():
-    ap = argparse.ArgumentParser(add_help=True)
-    ap.add_argument("--home", default=os.path.expanduser("~"),
-                    help="用户目录，默认 ~（主要给测试用）")
-    ap.add_argument("--master-dir", default=None,
-                    help="母版安装位置，默认 <home>/.workbuddy/templates/doc-driven-master")
-    ap.add_argument("--dry-run", action="store_true", help="只报告，不写盘")
-    ap.add_argument("--with-codebuddy", action="store_true",
-                    help="同时写入 <home>/.codebuddy/settings.json（钩子配置路径兜底）")
-    args = ap.parse_args()
-
-    home = os.path.abspath(os.path.expanduser(args.home))
-    wb = os.path.join(home, ".workbuddy")
-    master_dir = args.master_dir or os.path.join(wb, "templates", "doc-driven-master")
-    dry = args.dry_run
-
-    print("=" * 60)
-    print("文档驱动开发架构 · 新设备部署")
-    print("=" * 60)
-    print("用户目录  : %s" % home)
-    print("WorkBuddy : %s" % wb)
-    print("母版安装到: %s" % master_dir)
-    print("Python    : %s" % sys.executable)
-    print("模式      : %s" % ("DRY-RUN（不写盘）" if dry else "正式安装"))
-
-    if sys.version_info < (3, 8):
-        rec(False, "Python 版本 >= 3.8", "当前 %d.%d.%d" % sys.version_info[:3])
-        return finish()
-
-    # ---------- 第 0 步：检查 payload ----------
-    step(0, "检查部署包完整性")
-    needed = [
-        "payload/skills/doc-driven-dev/SKILL.md",
-        "payload/skills/doc-driven-framework-porting/SKILL.md",
-        "payload/hooks/" + GUARD_NAME,
-        "payload/memory-section.md",
-        "payload/master/00-驱动开发规则.md",
-        "payload/master/verify.py",
-    ]
-    missing = [p for p in needed if not os.path.isfile(os.path.join(HERE, p.replace("/", os.sep)))]
-    rec(not missing, "部署包文件齐全", ("缺 %s" % ", ".join(missing)) if missing else "%d 项" % len(needed))
-    if missing:
-        return finish()
-
-    # ---------- 第 1 步：自检钩子脚本（用 payload 原件，与是否写盘无关） ----------
-    step(1, "自检钩子脚本（真实跑一遍，不靠「应该没问题」）")
-    guard_src = os.path.join(PAYLOAD, "hooks", GUARD_NAME)
-    fw_dir = os.path.join(PAYLOAD, "master")
-
-    def run_guard(cwd):
-        payload = json.dumps({"cwd": cwd, "hook_event_name": "UserPromptSubmit"})
-        r = subprocess.run([sys.executable, guard_src], input=payload,
-                           capture_output=True, text=True, encoding="utf-8", timeout=30)
-        return json.loads(r.stdout)
-
-    try:
-        good = run_guard(fw_dir)
-        ctx = (good.get("hookSpecificOutput") or {}).get("additionalContext", "")
-        rec(bool(ctx) and good.get("continue") is True,
-            "框架项目 → 注入纪律提醒", (ctx[:38] + "…") if ctx else "未注入")
-    except Exception as e:
-        rec(False, "框架项目 → 注入纪律提醒", "钩子执行异常: %s" % e)
-
-    tmp = tempfile.mkdtemp()
-    try:
-        plain = run_guard(tmp)
-        rec(plain.get("continue") is True and not (plain.get("hookSpecificOutput") or {}).get("additionalContext"),
-            "非框架项目 → 静默放行", "不打扰无关工作")
-    except Exception as e:
-        rec(False, "非框架项目 → 静默放行", "钩子执行异常: %s" % e)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    # ---------- 第 2 步：安装技能 ----------
-    step(2, "安装两个用户级技能")
-    if not dry:
-        os.makedirs(os.path.join(wb, "skills"), exist_ok=True)
-    for name in ("doc-driven-dev", "doc-driven-framework-porting"):
-        src = os.path.join(PAYLOAD, "skills", name)
-        dst = os.path.join(wb, "skills", name)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--home", type=Path, default=Path.home())
+    parser.add_argument("--master-dir", type=Path)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--with-codebuddy", action="store_true")
+    args = parser.parse_args()
+    payload = HERE / "payload"
+    valid, detail = payload_valid(payload)
+    if not valid:
+        print("FAIL " + detail)
+        return 1
+    home = args.home.expanduser().resolve()
+    wb = home / ".workbuddy"
+    master = (args.master_dir or wb / "templates" / "doc-driven-master").resolve()
+    guard_src = payload / "hooks" / GUARD
+    # Validate script behavior before touching user configuration.
+    for event, cwd, should_inject in [("SessionStart", payload / "master", True),
+                                      ("UserPromptSubmit", payload / "master", False)]:
+        result = subprocess.run([sys.executable, str(guard_src)],
+                                input=json.dumps({"cwd": str(cwd), "hook_event_name": event}),
+                                text=True, encoding="utf-8", capture_output=True, timeout=15)
         try:
-            if dry:
-                rec(True, "技能 %s" % name, "将安装到 %s" % dst)
-                continue
-            if same_tree(src, dst):
-                rec(True, "技能 %s" % name, "内容一致，跳过（不覆盖、不产生备份）")
-                continue
-            bk = None
-            if os.path.isdir(dst):
-                bk = backup(dst)
-            shutil.copytree(src, dst, dirs_exist_ok=True)
-            n = sum(len(f) for _, _, f in os.walk(dst))
-            rec(os.path.isfile(os.path.join(dst, "SKILL.md")),
-                "技能 %s" % name, "%d 个文件%s" % (n, "，旧版已备份" if bk else ""))
-        except Exception as e:
-            rec(False, "技能 %s" % name, str(e))
-
-    # ---------- 第 3 步：安装钩子脚本 ----------
-    step(3, "安装触发层钩子")
-    hooks_dir = os.path.join(wb, "hooks")
-    guard_dst = os.path.join(hooks_dir, GUARD_NAME)
+            response = json.loads(result.stdout)
+            injected = bool(response.get("hookSpecificOutput", {}).get("additionalContext"))
+            if result.returncode or response.get("continue") is not True or injected != should_inject:
+                raise ValueError("钩子行为不符合 v5 约定")
+        except (ValueError, AttributeError):
+            print("FAIL 钩子自测: " + event)
+            return 1
+    command = '"%s" "%s"' % (Path(sys.executable).as_posix(), (wb / "hooks" / GUARD).as_posix())
+    configs = [wb / "settings.json"]
+    secondary = home / ".codebuddy" / "settings.json"
+    if args.with_codebuddy or secondary.is_file():
+        configs.append(secondary)
+    prepared = []
     try:
-        if dry:
-            rec(True, "钩子脚本", "将安装到 %s" % guard_dst)
-        else:
-            os.makedirs(hooks_dir, exist_ok=True)
-            if os.path.isfile(guard_dst) and filecmp.cmp(guard_src, guard_dst, shallow=False):
-                rec(True, "钩子脚本", "内容一致，跳过（幂等）")
-            else:
-                shutil.copy2(guard_src, guard_dst)
-                rec(os.path.isfile(guard_dst), "钩子脚本", guard_dst)
-    except Exception as e:
-        rec(False, "钩子脚本", str(e))
-
-    # ---------- 第 4 步：把 hooks 配置合并进 settings.json ----------
-    step(4, "合并 hooks 配置（保留原有配置，幂等）")
-    # 钩子命令必须用本机真实可用的解释器绝对路径
-    hook_cmd = '"%s" "%s"' % (sys.executable.replace("\\", "/"),
-                              guard_dst.replace("\\", "/"))
-
-    targets = [os.path.join(wb, "settings.json")]
-    if args.with_codebuddy:
-        targets.append(os.path.join(home, ".codebuddy", "settings.json"))
-
-    for sp in targets:
-        existed = os.path.isfile(sp)
-        data = {}
-        if existed:
-            try:
-                with open(sp, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception as e:
-                rec(False, "settings.json 合并 (%s)" % sp,
-                    "不是合法 JSON，已跳过且未改动原文件: %s" % e)
+        for path in configs:
+            old = path.read_text(encoding="utf-8") if path.is_file() else "{}"
+            data = json.loads(old)
+            if not isinstance(data, dict):
+                raise ValueError("配置顶层不是对象")
+            if path == secondary and not args.with_codebuddy and GUARD not in old:
                 continue
-        hooks = data.setdefault("hooks", {})
-        added = []
-        for event, matcher in (("SessionStart", "startup"), ("UserPromptSubmit", None)):
-            arr = hooks.setdefault(event, [])
-            dup = any(GUARD_NAME in h.get("command", "")
-                      for m in arr if isinstance(m, dict)
-                      for h in m.get("hooks", []) if isinstance(h, dict))
-            if dup:
-                continue
-            entry = {"hooks": [{"type": "command", "command": hook_cmd, "timeout": 10}]}
-            if matcher:
-                entry["matcher"] = matcher
-            arr.append(entry)
-            added.append(event)
-
-        if not added:
-            label = os.path.basename(os.path.dirname(sp)) or sp
-            rec(True, "settings.json 合并 (%s)" % label, "钩子已存在，跳过（幂等）")
-            continue
-        if dry:
-            rec(True, "settings.json 合并", "将新增事件: %s" % ", ".join(added))
-            continue
-        try:
-            os.makedirs(os.path.dirname(sp), exist_ok=True)
-            bk = backup(sp) if existed else None
-            with open(sp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            rec(True, "settings.json 合并", "新增 %s%s" % (", ".join(added), "，已备份" if bk else "（新建）"))
-        except Exception as e:
-            rec(False, "settings.json 合并", str(e))
-
-    # ---------- 第 5 步：安装母版 + 追加治理记忆段 ----------
-    step(5, "安装母版全套 + 追加治理记忆段")
-    try:
-        if dry:
-            rec(True, "母版安装", "将安装到 %s" % master_dir)
-        else:
-            shutil.copytree(os.path.join(PAYLOAD, "master"), master_dir, dirs_exist_ok=True)
-            n = sum(len(f) for _, _, f in os.walk(master_dir))
-            rec(n >= 8, "母版安装", "%s（%d 个文件）" % (master_dir, n))
-    except Exception as e:
-        rec(False, "母版安装", str(e))
-
-    mem_path = os.path.join(wb, "MEMORY.md")
-    try:
-        with open(os.path.join(PAYLOAD, "memory-section.md"), "r", encoding="utf-8") as f:
-            section = f.read().strip()
-        old = ""
-        if os.path.isfile(mem_path):
-            with open(mem_path, "r", encoding="utf-8") as f:
-                old = f.read()
-        if MEM_MARK in old:
-            rec(True, "治理记忆段", "已存在，跳过（幂等）")
-        elif dry:
-            rec(True, "治理记忆段", "将追加到 %s" % mem_path)
-        else:
-            bk = backup(mem_path) if old else None
-            os.makedirs(os.path.dirname(mem_path), exist_ok=True)
-            with open(mem_path, "w", encoding="utf-8") as f:
-                f.write((old.rstrip() + "\n\n" if old.strip() else "# 用户级长期记忆（跨项目）\n\n")
-                        + section + "\n")
-            rec(True, "治理记忆段", "已追加%s" % ("，原文件已备份" if bk else ""))
-    except Exception as e:
-        rec(False, "治理记忆段", str(e))
-
-    # ---------- 第 6 步：安装后核对 ----------
-    step(6, "安装后核对")
-    if dry:
-        rec(True, "安装后核对", "DRY-RUN 模式跳过")
-    else:
-        checks = [
-            (os.path.join(wb, "skills", "doc-driven-dev", "SKILL.md"), "技能 doc-driven-dev"),
-            (os.path.join(wb, "skills", "doc-driven-framework-porting", "templates", "verify.py"),
-             "移植技能模板"),
-            (guard_dst, "钩子脚本"),
-            (os.path.join(master_dir, "00-驱动开发规则.md"), "母版 00 规则"),
-        ]
-        for p, label in checks:
-            rec(os.path.isfile(p), "已就位: %s" % label)
-        try:
-            with open(os.path.join(wb, "settings.json"), "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            rec("hooks" in cfg and "UserPromptSubmit" in cfg.get("hooks", {}),
-                "已就位: settings.json 钩子配置")
-        except Exception as e:
-            rec(False, "已就位: settings.json 钩子配置", str(e))
-        # 母版自验收
-        try:
-            r = subprocess.run([sys.executable, os.path.join(master_dir, "verify.py")],
-                               cwd=master_dir, capture_output=True, text=True,
-                               encoding="utf-8", timeout=60)
-            tail = [l for l in r.stdout.splitlines() if l.startswith("验收结果")]
-            ok = r.returncode == 0
-            detail = tail[0] if tail else "退出码 %d" % r.returncode
-            # 若母版被装进某个 git 仓库内部（例如测试时装到项目子目录），
-            # "工作区干净"一项会受宿主仓库的未提交变更影响 —— 属环境因素，不是安装失败。
-            if not ok and "git 工作区干净" in r.stdout:
-                detail += "｜提示：母版位于某个 git 仓库内，该项受宿主仓库未提交变更影响（环境因素）"
-            rec(ok, "母版 verify.py 自验收", detail)
-        except Exception as e:
-            rec(False, "母版 verify.py 自验收", str(e))
-
-    return finish()
-
-
-def finish():
-    okn = sum(1 for ok, _, _ in results if ok)
-    bad = [(t, d) for ok, t, d in results if not ok]
-    print()
-    print("=" * 60)
-    print("部署结果: %d/%d PASS%s" % (okn, len(results),
-                                    (", FAIL: " + "; ".join(t for t, _ in bad)) if bad else ""))
-    print("=" * 60)
-    if bad:
-        print("\n未通过项：")
-        for t, d in bad:
-            print("  - %s%s" % (t, ("（%s）" % d) if d else ""))
-    else:
-        print("\n下一步：")
-        print("  1. 重启 WorkBuddy（或开一个新会话），让钩子配置生效；")
-        print("  2. 在任意项目里发一条消息，观察上下文是否出现「[文档驱动框架]」提醒；")
-        print("  3. 若没有生效，用 --with-codebuddy 重跑一次（钩子配置路径兜底）；")
-        print("  4. 【可选但推荐】把本包整理成「母版工作区」（顶层设计目录）：")
-        print("     python init-master-workspace.py --init-git")
-        print("     之后新项目都从这个母版取源，改母版后跑 sync-master.py 即可保持各副本同步；")
-        print("  5. 新项目开工：对 WorkBuddy 说「给 XX 项目建文档驱动架构」。")
-    return 0 if not bad else 1
+            updated = update_hooks(data, command)
+            prepared.append((path, (json.dumps(updated, ensure_ascii=False, indent=2) + "\n").encode("utf-8")))
+    except (OSError, ValueError, TypeError) as exc:
+        print("FAIL 配置不可合并，未改用户配置: " + str(exc))
+        return 1
+    changed = copy_tree(payload / "skills", wb / "skills", args.dry_run)
+    changed += write_bytes(wb / "hooks" / GUARD, guard_src.read_bytes(), args.dry_run)
+    changed += copy_tree(payload / "master", master, args.dry_run)
+    for path, data in prepared:
+        changed += write_bytes(path, data, args.dry_run)
+    if not args.dry_run:
+        result = subprocess.run([sys.executable, str(master / "verify.py"), "--mode", "template"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        if result.returncode:
+            print(result.stdout)
+            print("FAIL 母版结构检查")
+            return 1
+    print("PASS v%s，%s %d 份变更；未改写用户记忆" % (detail, "计划" if args.dry_run else "完成", changed))
+    print("客户端触发仍需重启并验证；脚本自测不代表平台已生效。")
+    legacy = wb / "MEMORY.md"
+    if legacy.is_file() and "开发项目治理（常设命令" in legacy.read_text(encoding="utf-8"):
+        print("WARN 存在 v4 全局治理记忆；请按授权单独核对旧规则，本安装器不会修改。")
+    return 0
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     sys.exit(main())
