@@ -14,6 +14,15 @@ MASTER = CORE + ["README.md", "文档导读.md", "框架评价与边界.md", "�
 SKILLS = ("doc-driven-dev", "doc-driven-framework-porting")
 
 
+def emit(text):
+    """CLI uses UTF-8; imported helpers also tolerate a legacy host stream."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(encoding, errors="backslashreplace").decode(encoding))
+
+
 def source_map(root):
     sources = {"master/" + name: root / name for name in MASTER}
     for directory in ("releases", "tests", "skills", ".github"):
@@ -34,7 +43,7 @@ def sync(root=ROOT, check=False):
     sources = source_map(root)
     missing = [name for name, path in sources.items() if not path.is_file()]
     if missing:
-        print("FAIL 缺少源文件: " + ", ".join(missing))
+        emit("FAIL 缺少源文件: " + ", ".join(missing))
         return 1
     current = {p.relative_to(payload).as_posix() for directory in ("master", "skills", "hooks")
                for p in (payload / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts}
@@ -48,7 +57,7 @@ def sync(root=ROOT, check=False):
     manifest_path = payload / "manifest.json"
     manifest_changed = not manifest_path.is_file() or manifest_path.read_text(encoding="utf-8") != expected
     if extras:
-        print("FAIL 未识别副本（不自动删除）: " + ", ".join(sorted(extras)))
+        emit("FAIL 未识别副本（不自动删除）: " + ", ".join(sorted(extras)))
         return 1
     if not check:
         for name in changes:
@@ -59,11 +68,11 @@ def sync(root=ROOT, check=False):
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             manifest_path.write_bytes(expected.encode("utf-8"))
     different = bool(changes or manifest_changed)
-    print("%s 副本 %d 份，差异 %d，清单%s；未读写用户级技能或配置" % (
+    emit("%s 副本 %d 份，差异 %d，清单%s；未读写用户级技能或配置" % (
         "FAIL" if check and different else "PASS", len(sources), len(changes),
         "有差异" if manifest_changed else "一致"))
     if check and changes:
-        print("\n".join(changes))
+        emit("\n".join(changes))
     return 1 if check and different else 0
 
 

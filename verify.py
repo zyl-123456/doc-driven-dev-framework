@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Document structure checker, v5.0.0. No product or security certification."""
+"""Document structure checker, v5.0.1. No product or security certification."""
 import argparse
 import json
 import re
@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-VERSION = "5.0.0"
+VERSION = "5.0.1"
 MODE = "auto"  # Legacy template/project overrides remain supported.
 DOC_NAMES = ["00-驱动开发规则.md", "01-人类需求描述.md", "02-需求技术拆解.md",
              "03-技术实现方案.md", "04-实现过程记录.md"]

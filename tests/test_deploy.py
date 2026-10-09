@@ -112,6 +112,18 @@ class DeploymentChecks(unittest.TestCase):
         (payload / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         self.assertFalse(installer.payload_valid(payload)[0])
 
+    def test_imported_sync_handles_legacy_stdout_encoding(self):
+        script = ROOT / "deploy-kit/sync-master.py"
+        code = ("import importlib.util,sys; "
+                "s=importlib.util.spec_from_file_location('kit_sync',sys.argv[1]); "
+                "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+                "sys.exit(m.sync(check=True))")
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONDONTWRITEBYTECODE="1")
+        result = subprocess.run([sys.executable, "-c", code, str(script)],
+                                capture_output=True, env=env)
+        self.assertEqual(0, result.returncode, result.stderr.decode("ascii", errors="replace"))
+        self.assertIn(b"PASS", result.stdout)
+
     def test_sync_check_fails_on_drift_and_unknown_copies(self):
         master = self.base / "master"
         master.mkdir()
